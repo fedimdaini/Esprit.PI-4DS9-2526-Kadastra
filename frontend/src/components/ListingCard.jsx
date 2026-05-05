@@ -11,6 +11,10 @@ const CardStat = ({ icon, label, value }) => {
   );
 };
 
+function fireKadastraAttach(listing) {
+  window.dispatchEvent(new CustomEvent('kadastra-attach-listing', { detail: listing }));
+}
+
 export default function ListingCard({ listing, onClick }) {
   const { titre, prix, adresse, localisation, pieces, chambres, salles_de_bain, surface, source, first_image } = listing;
 
@@ -74,13 +78,27 @@ export default function ListingCard({ listing, onClick }) {
           <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.5px' }}>
             {prix || 'Prix à consulter'}
           </div>
-          <div style={{ 
-            width: 32, height: 32, borderRadius: '50%', background: 'var(--primary-light)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)'
-          }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-            </svg>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); fireKadastraAttach(listing); }}
+              title="Analyser avec Kadastra AI"
+              style={{
+                background: 'linear-gradient(135deg,#3B82F6,#1D4ED8)',
+                border: 'none', borderRadius: 8, padding: '5px 10px',
+                color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              📊 IA
+            </button>
+            <div style={{
+              width: 32, height: 32, borderRadius: '50%', background: 'var(--primary-light)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)'
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+              </svg>
+            </div>
           </div>
         </div>
       </div>

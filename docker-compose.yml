@@ -9,6 +9,7 @@ services:
     environment:
       - KADASTRA_MODEL_DIR=/app/kadastra_models
       - KADASTRA_DATA_PATH=/app/data/df_clean_K.xlsx
+      - GROQ_API_KEY=${GROQ_API_KEY}
     volumes:
       - ./kadastra_models:/app/kadastra_models:ro
       - ./data:/app/data:ro

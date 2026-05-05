@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Read(//c/Users/Lenovo/Downloads/**)",
-      "Bash(powershell -command \"Expand-Archive -Path 'kadastra_deploy.zip' -DestinationPath 'kadastra_deploy_extracted' -Force\")"
+      "Bash(powershell -command \"Expand-Archive -Path 'kadastra_deploy.zip' -DestinationPath 'kadastra_deploy_extracted' -Force\")",
+      "Read(//mnt/c/Users/Lenovo/Downloads/immo_auth/immo_auth/kadastra_ml_service/**)",
+      "Read(//mnt/c/Users/Lenovo/Downloads/immo_auth/immo_auth/**)"
     ]
   }
 }

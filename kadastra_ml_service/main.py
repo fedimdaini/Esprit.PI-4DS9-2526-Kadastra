@@ -7,7 +7,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
-import time
+import os, time
+from apscheduler.schedulers.background import BackgroundScheduler
+
+_scheduler = BackgroundScheduler()
 
 app = FastAPI(
     title="Kadastra ML Service",
@@ -17,7 +20,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,9 +35,19 @@ async def startup_load_models():
     from kadastra.loader import get_generator
     _generator = get_generator()
     print(f"Kadastra agent loaded. XGBoost models: {len(_generator.simulator._xgb_models)}")
+    from kadastra.constants_updater import run_weekly_update
+    _scheduler.add_job(run_weekly_update, "interval", weeks=1, id="constants_weekly")
+    _scheduler.start()
+    print("Constants scheduler started (weekly BCT TMM update).")
 
 
-# ── Request/Response schemas ──────────────────────────────────────────────
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
+
+
+# ── Request / Response schemas ────────────────────────────────────────────
 class PropertyInput(BaseModel):
     Type: str = "Appartement a vendre"
     Adresse: str = "Tunis"
@@ -66,9 +79,7 @@ class AnalyzeRequest(BaseModel):
     profile: Optional[InvestmentProfile] = None
 
 class QuickAnalyzeRequest(BaseModel):
-    """Natural-language-style input parsed into structured fields."""
     text: Optional[str] = None
-    # OR structured:
     type: Optional[str] = None
     location: Optional[str] = None
     price: Optional[float] = None
@@ -79,27 +90,68 @@ class QuickAnalyzeRequest(BaseModel):
     has_parking: Optional[bool] = None
     has_elevator: Optional[bool] = None
 
+class ChatRequest(BaseModel):
+    text: str
+    groq_key: Optional[str] = None   # client may pass own key; fallback to env
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────
+def _check_loaded():
+    if _generator is None:
+        raise HTTPException(status_code=503, detail="Models not loaded yet")
+
+def _run_validation(prop: dict):
+    """Run validation and raise 422 if there are hard errors."""
+    from kadastra.core import validate_property_input
+    v = validate_property_input(prop)
+    if not v["valid"]:
+        raise HTTPException(status_code=422, detail={
+            "type":     "validation_error",
+            "errors":   v["errors"],
+            "warnings": v["warnings"],
+        })
+    return v["warnings"]   # pass back to caller so they can include in response
+
+def _deep_convert(obj):
+    import numpy as np
+    if isinstance(obj, dict):
+        return {k: _deep_convert(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_deep_convert(v) for v in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
     models_loaded = _generator is not None and _generator.simulator._xgb_trained
-    return {"status": "ok" if models_loaded else "loading",
-            "models_loaded": models_loaded,
-            "xgb_types": list(_generator.simulator._xgb_models.keys()) if _generator else []}
+    return {
+        "status": "ok" if models_loaded else "loading",
+        "models_loaded": models_loaded,
+        "xgb_types": list(_generator.simulator._xgb_models.keys()) if _generator else [],
+    }
 
 
 @app.post("/api/analyze")
 async def analyze(req: AnalyzeRequest):
-    if _generator is None:
-        raise HTTPException(status_code=503, detail="Models not loaded yet")
-
+    _check_loaded()
     t0 = time.time()
+
     prop = req.property.dict()
-    # Fill None with 0 for optional fields
     for k in ["pieces", "chambres", "sallesdebain"]:
         if prop[k] is None:
             prop[k] = 0
+
+    # ── Sanity check ──
+    warnings = _run_validation(prop)
 
     profile = req.profile.dict() if req.profile else None
 
@@ -108,41 +160,35 @@ async def analyze(req: AnalyzeRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-    elapsed = time.time() - t0
-
-    # Convert numpy types to native Python for JSON serialization
+    elapsed  = time.time() - t0
     scenario = _deep_convert(scenario)
 
     return {
-        "scenario": scenario,
+        "scenario":        scenario,
+        "warnings":        warnings,
         "elapsed_seconds": round(elapsed, 2),
     }
 
 
 @app.post("/api/quick-analyze")
 async def quick_analyze(req: QuickAnalyzeRequest):
-    """Simplified endpoint — accepts partial input, fills defaults."""
-    if _generator is None:
-        raise HTTPException(status_code=503, detail="Models not loaded yet")
+    _check_loaded()
 
-    # Parse natural language if provided
-    prop_dict = {}
+    prop_dict: dict = {}
     if req.text:
         prop_dict = _parse_natural_language(req.text)
-    
-    # Override with structured fields
-    if req.type: prop_dict["Type"] = req.type
-    if req.location: prop_dict["Adresse"] = req.location
-    if req.price: prop_dict["price_numeric"] = req.price
-    if req.surface: prop_dict["surface_numeric"] = req.surface
-    if req.is_new: prop_dict["neuf"] = 1
-    if req.has_parking: prop_dict["parking"] = 1
-    if req.has_elevator: prop_dict["ascenseur"] = 1
 
-    # Defaults
-    prop_dict.setdefault("Type", "Appartement a vendre")
-    prop_dict.setdefault("Adresse", "Tunis")
-    prop_dict.setdefault("price_numeric", 250_000)
+    if req.type:         prop_dict["Type"]            = req.type
+    if req.location:     prop_dict["Adresse"]          = req.location
+    if req.price:        prop_dict["price_numeric"]    = req.price
+    if req.surface:      prop_dict["surface_numeric"]  = req.surface
+    if req.is_new:       prop_dict["neuf"]             = 1
+    if req.has_parking:  prop_dict["parking"]          = 1
+    if req.has_elevator: prop_dict["ascenseur"]        = 1
+
+    prop_dict.setdefault("Type",           "Appartement a vendre")
+    prop_dict.setdefault("Adresse",        "Tunis")
+    prop_dict.setdefault("price_numeric",  250_000)
     prop_dict.setdefault("surface_numeric", 100)
     for k in ["meuble","neuf","parking","ascenseur","balcon_terrasse",
               "climatisation","chauffage","jardin","piscine"]:
@@ -150,13 +196,16 @@ async def quick_analyze(req: QuickAnalyzeRequest):
     for k in ["pieces","chambres","sallesdebain"]:
         prop_dict.setdefault(k, 0)
 
+    # ── Sanity check ──
+    warnings = _run_validation(prop_dict)
+
     profile = {
-        "budget": req.budget or 300_000,
+        "budget":               req.budget or 300_000,
         "holding_period_years": req.holding_years or 5,
-        "rental_income": 0,
-        "first_time_buyer": True,
-        "is_new_promoter": prop_dict.get("neuf", 0) == 1,
-        "risk_tolerance": "medium",
+        "rental_income":        0,
+        "first_time_buyer":     True,
+        "is_new_promoter":      prop_dict.get("neuf", 0) == 1,
+        "risk_tolerance":       "medium",
     }
 
     t0 = time.time()
@@ -166,96 +215,138 @@ async def quick_analyze(req: QuickAnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     scenario = _deep_convert(scenario)
-    elapsed = time.time() - t0
+    elapsed  = time.time() - t0
 
-    # Return a simplified chat-friendly response
     v = scenario["verdict"]
     s = scenario["simulator"]
     r = scenario["risk"]
     t = scenario["tax"]
 
-    chat_response = {
-        "verdict": v["recommendation"],
-        "score": v["score"],
-        "summary": f"{v['recommendation']} ({v['score']}/100)",
+    return {
+        "verdict":   v["recommendation"],
+        "score":     v["score"],
+        "summary":   f"{v['recommendation']} ({v['score']}/100)",
         "financials": {
-            "gross_yield": s["rental_yield"]["gross_yield"],
-            "net_yield": s["rental_yield"]["net_yield"],
-            "irr_percent": s["roi_rental"]["irr_percent"],
-            "monthly_rent_estimate": s["rental_yield"]["estimated_monthly_rent"],
-            "npv_p50": s["mc_rental"]["npv_p50"],
-            "prob_positive_npv": s["mc_rental"]["prob_positive"],
+            "gross_yield":            s["rental_yield"]["gross_yield"],
+            "net_yield":              s["rental_yield"]["net_yield"],
+            "irr_percent":            s["roi_rental"]["irr_percent"],
+            "monthly_rent_estimate":  s["rental_yield"]["estimated_monthly_rent"],
+            "npv_p5":                 s["mc_rental"]["npv_p5"],
+            "npv_p50":                s["mc_rental"]["npv_p50"],
+            "npv_p95":                s["mc_rental"]["npv_p95"],
+            "prob_positive_npv":      s["mc_rental"]["prob_positive"],
+            "initial_investment":     s["roi_rental"]["initial_investment"],
+            "monthly_mortgage":       s["roi_rental"]["monthly_mortgage"],
         },
         "risk": {
-            "level": r["risk_level"],
-            "score": r["overall_risk_score"],
-            "flags": r["risk_flags"],
+            "level":      r["risk_level"],
+            "score":      r["overall_risk_score"],
+            "flags":      r["risk_flags"],
+            "components": r["component_scores"],
+            "mitigation": r["mitigation"],
         },
         "tax": {
             "acquisition_fees_pct": t["acquisition_costs"]["fees_pct"],
+            "acquisition_fees_tnd": t["acquisition_costs"]["total_fees"],
             "optimal_holding_years": t["optimal_holding_years"],
-            "cgt_note": t["cgt_cliff_note"],
+            "cgt_note":             t["cgt_cliff_note"],
+            "annual_taxes":         t["annual_tax_burden"],
         },
-        "insights": v["key_insights"],
-        "explanations": scenario["explanations"],
-        "holding_sweep": t["holding_period_sweep"],
-        "elapsed_seconds": round(elapsed, 2),
+        "insights":         v["key_insights"],
+        "explanations":     scenario["explanations"],
+        "holding_sweep":    t["holding_period_sweep"],
+        "warnings":         warnings,
+        "elapsed_seconds":  round(elapsed, 2),
     }
 
-    return chat_response
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    """
+    LLM-like conversational endpoint.
+    Routes to deal_search / market_analysis / portfolio_advice / general.
+    """
+    _check_loaded()
+
+    from kadastra.chat_engine import handle_chat
+
+    groq_key = (
+        req.groq_key
+        or os.environ.get("GROQ_API_KEY")
+        or None
+    )
+
+    try:
+        result = handle_chat(
+            text=req.text,
+            df=_generator.df,
+            portfolio_advisor=_generator.portfolio_advisor,
+            groq_key=groq_key,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return _deep_convert(result)
 
 
 @app.get("/api/constants")
 async def get_constants():
-    """Return current TUNISIA_CONSTANTS for transparency."""
     from kadastra.core import TUNISIA_CONSTANTS
     return _deep_convert(TUNISIA_CONSTANTS)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────
+@app.post("/api/update-constants")
+async def update_constants(overrides: Dict[str, Any] = {}):
+    from kadastra.constants_updater import apply_manual_overrides
+    from kadastra.core import TUNISIA_CONSTANTS
+    accepted = apply_manual_overrides(overrides)
+    return {
+        "accepted":          accepted,
+        "rejected":          [k for k in overrides if k not in accepted],
+        "current_constants": _deep_convert(TUNISIA_CONSTANTS),
+    }
+
+
+@app.post("/api/trigger-update")
+async def trigger_update():
+    from kadastra.constants_updater import run_weekly_update
+    updated = run_weekly_update()
+    from kadastra.core import TUNISIA_CONSTANTS
+    return {"updated_keys": updated, "current_constants": _deep_convert(TUNISIA_CONSTANTS)}
+
+
+# ── Natural-language parser ───────────────────────────────────────────────
 def _parse_natural_language(text: str) -> dict:
-    """Basic keyword extraction from natural language input."""
     import re
     result = {}
     text_lower = text.lower()
 
-    # Type detection
     if "appartement" in text_lower or "appart" in text_lower:
-        if "louer" in text_lower or "location" in text_lower:
-            result["Type"] = "Appartement a louer"
-        else:
-            result["Type"] = "Appartement a vendre"
+        result["Type"] = "Appartement a louer" if "louer" in text_lower or "location" in text_lower \
+                         else "Appartement a vendre"
     elif "maison" in text_lower or "villa" in text_lower:
-        if "louer" in text_lower:
-            result["Type"] = "Maison a louer"
-        else:
-            result["Type"] = "Maison a vendre"
+        result["Type"] = "Maison a louer" if "louer" in text_lower else "Maison a vendre"
     elif "terrain" in text_lower:
         result["Type"] = "Terrain a vendre"
     elif "local" in text_lower or "commercial" in text_lower:
         result["Type"] = "Local commercial a vendre"
 
-    # Price
     price_match = re.search(r'(\d[\d\s,.]*)\s*(?:tnd|dt|dinars?)', text_lower)
     if price_match:
-        price_str = price_match.group(1).replace(" ", "").replace(",", "").replace(".", "")
-        try:
-            result["price_numeric"] = float(price_str)
-        except ValueError:
-            pass
+        price_str = price_match.group(1).replace(" ","").replace(",","").replace(".","")
+        try:    result["price_numeric"] = float(price_str)
+        except: pass
     if "price_numeric" not in result:
-        price_match2 = re.search(r'(?:prix|price|cout)\s*:?\s*(\d[\d\s,.]*)', text_lower)
-        if price_match2:
-            ps = price_match2.group(1).replace(" ", "").replace(",", "")
+        pm2 = re.search(r'(?:prix|price|cout)\s*:?\s*(\d[\d\s,.]*)', text_lower)
+        if pm2:
+            ps = pm2.group(1).replace(" ","").replace(",","")
             try: result["price_numeric"] = float(ps)
             except: pass
 
-    # Surface
-    surf_match = re.search(r'(\d+)\s*m[²2]?', text_lower)
-    if surf_match:
-        result["surface_numeric"] = float(surf_match.group(1))
+    sm = re.search(r'(\d+)\s*m[²2]?', text_lower)
+    if sm:
+        result["surface_numeric"] = float(sm.group(1))
 
-    # Location
     cities = ["tunis","ariana","sousse","sfax","nabeul","hammamet","bizerte",
               "monastir","gabes","kairouan","kasserine","lac","manouba","ben arous"]
     for city in cities:
@@ -263,38 +354,16 @@ def _parse_natural_language(text: str) -> dict:
             result["Adresse"] = city.title()
             break
 
-    # Features
-    if "neuf" in text_lower or "new" in text_lower or "neuve" in text_lower:
-        result["neuf"] = 1
-    if "parking" in text_lower:
-        result["parking"] = 1
-    if "ascenseur" in text_lower or "elevator" in text_lower:
-        result["ascenseur"] = 1
-    if "meuble" in text_lower or "furnished" in text_lower:
-        result["meuble"] = 1
-    if "climatisation" in text_lower or "clim" in text_lower:
-        result["climatisation"] = 1
-    if "piscine" in text_lower or "pool" in text_lower:
-        result["piscine"] = 1
-    if "jardin" in text_lower or "garden" in text_lower:
-        result["jardin"] = 1
+    for kw, key in [
+        (["neuf","neuve","new"], "neuf"),
+        (["parking"],            "parking"),
+        (["ascenseur","elevator"],"ascenseur"),
+        (["meuble","furnished"], "meuble"),
+        (["climatisation","clim"],"climatisation"),
+        (["piscine","pool"],     "piscine"),
+        (["jardin","garden"],    "jardin"),
+    ]:
+        if any(k in text_lower for k in kw):
+            result[key] = 1
 
     return result
-
-
-def _deep_convert(obj):
-    """Recursively convert numpy types to native Python for JSON."""
-    import numpy as np
-    if isinstance(obj, dict):
-        return {k: _deep_convert(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [_deep_convert(v) for v in obj]
-    elif isinstance(obj, (np.integer,)):
-        return int(obj)
-    elif isinstance(obj, (np.floating,)):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, np.bool_):
-        return bool(obj)
-    return obj

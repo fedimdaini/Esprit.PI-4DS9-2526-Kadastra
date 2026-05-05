@@ -41,6 +41,81 @@ def rollback_constants():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# INPUT VALIDATION
+# ═══════════════════════════════════════════════════════════════════════════
+_MARKET_BOUNDS = {
+    "price_max":              50_000_000,  # 50 M TND (~17 M€) — absolute ceiling
+    "price_min":               5_000,      # 5 k TND — absolute floor
+    "price_per_m2_max":       20_000,      # prime Tunis Lac ultra-luxury
+    "price_per_m2_min":           80,      # rural land minimum
+    "surface_max":            50_000,      # 5 ha terrain — plausible
+    "surface_min":                 5,      # studio minimum
+    "price_per_m2_warn_high": 12_000,      # soft warn — ultra-premium
+}
+
+def validate_property_input(prop: dict) -> dict:
+    """
+    Guard-rail check against Tunisian real estate market bounds.
+    Returns {"valid": bool, "errors": [...], "warnings": [...]}
+    Hard errors stop analysis; warnings are shown alongside results.
+    """
+    errors, warnings = [], []
+    price   = float(prop.get("price_numeric",   0) or 0)
+    surface = float(prop.get("surface_numeric", 0) or 0)
+
+    # ── Price ─────────────────────────────────────────────────────────────
+    if price <= 0:
+        errors.append("Le prix est requis et doit être positif.")
+    elif price > _MARKET_BOUNDS["price_max"]:
+        errors.append(
+            f"Prix de {price:,.0f} TND irréaliste pour le marché tunisien "
+            f"(plafond: {_MARKET_BOUNDS['price_max']:,.0f} TND ≈ 17 M€). "
+            "Vérifiez la saisie — erreur d'unité probable."
+        )
+    elif price < _MARKET_BOUNDS["price_min"]:
+        errors.append(
+            f"Prix de {price:,.0f} TND trop bas pour de l'immobilier "
+            f"(plancher: {_MARKET_BOUNDS['price_min']:,.0f} TND)."
+        )
+
+    # ── Surface ───────────────────────────────────────────────────────────
+    if surface > 0:
+        if surface < _MARKET_BOUNDS["surface_min"]:
+            errors.append(
+                f"Surface de {surface:.1f} m² irréaliste "
+                f"(minimum: {_MARKET_BOUNDS['surface_min']} m²)."
+            )
+        elif surface > _MARKET_BOUNDS["surface_max"]:
+            warnings.append(
+                f"Surface de {surface:,.0f} m² très grande — vérifiez si l'unité est correcte."
+            )
+
+    # ── Price per m² (only if both values look valid) ─────────────────────
+    price_ok   = price > 0 and not any("Prix" in e or "prix" in e for e in errors)
+    surface_ok = 0 < surface >= _MARKET_BOUNDS["surface_min"]
+    if price_ok and surface_ok:
+        ppm2 = price / surface
+        if ppm2 > _MARKET_BOUNDS["price_per_m2_max"]:
+            errors.append(
+                f"Prix au m² de {ppm2:,.0f} TND/m² dépasse le plafond du marché tunisien "
+                f"({_MARKET_BOUNDS['price_per_m2_max']:,.0f} TND/m²). "
+                f"Calcul: {price:,.0f} TND ÷ {surface:.0f} m² = {ppm2:,.0f} TND/m². "
+                "Vérifiez le prix ou la surface."
+            )
+        elif ppm2 < _MARKET_BOUNDS["price_per_m2_min"]:
+            warnings.append(
+                f"Prix au m² de {ppm2:,.0f} TND/m² très bas — terrain non bâti ou erreur de saisie?"
+            )
+        elif ppm2 > _MARKET_BOUNDS["price_per_m2_warn_high"]:
+            warnings.append(
+                f"Prix au m² de {ppm2:,.0f} TND/m² — segment ultra-luxe "
+                "(Lac 2, Gammarth, Marsa haut standing uniquement)."
+            )
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # C1 — INVESTMENT SCENARIO SIMULATOR
 # ═══════════════════════════════════════════════════════════════════════════
 class InvestmentScenarioSimulator:
@@ -157,19 +232,37 @@ class InvestmentScenarioSimulator:
         mp=npf.pmt(mr,nmo,-mortg) if mortg>0 else 0.0
         rental=self.calculate_rental_yield(prop)
         ap=self._appr(prop.get("Adresse",""))
-        cfs=[-down]; cur=price
+
+        # Include acquisition costs in initial outflow for accurate IRR
+        is_new=prop.get("neuf",0)==1
+        if is_new:
+            acq_reg=0
+            for lim,rate in C["reg_new_promoter"]:
+                if price<=lim: acq_reg=price*rate; break
+        else:
+            rr=C["reg_resale_low"] if price<=C["reg_resale_thresh"] else C["reg_resale_high"]
+            acq_reg=price*rr
+        acq_fees=acq_reg+price*C["cpf_rate"]+price*C["notary_rate"]
+
+        cfs=[-(down+acq_fees)]; cur=price
         for _ in range(years):
             cur*=(1+ap)
             cfs.append((rental["net_annual_rent"]-mp*12) if scenario=="rental" else -(mp*12))
-        if scenario=="flip":
-            gain=max(0,cur-price*(1+C["cgt_index_per_year"])**years)
-            cgt=gain*(C["cgt_ge10"] if years>=10 else C["cgt_lt10"])
-            rem=abs(npf.pv(mr,nmo-years*12,mp)); cfs[-1]+=cur-rem-cgt
+
+        # Terminal exit value applied to BOTH scenarios:
+        # sell at appreciated price, pay off remaining mortgage balance, pay CGT.
+        # Without this, the rental IRR has no sign change → npf.irr returns NaN → 0.
+        gain=max(0,cur-price*(1+C["cgt_index_per_year"])**years)
+        cgt=gain*(C["cgt_ge10"] if years>=10 else C["cgt_lt10"])
+        months_rem=max(nmo-years*12, 0)
+        rem=abs(npf.pv(mr,months_rem,mp)) if months_rem>0 and mortg>0 else 0.0
+        cfs[-1]+=cur-rem-cgt
+
         try: irr=float(npf.irr(cfs))*100; irr=irr if np.isfinite(irr) else 0.0
         except: irr=0.0
         npv_val=float(npf.npv(C["bcт_tmm"],cfs))
         cumul=np.cumsum(cfs); pb=next((i for i,v in enumerate(cumul) if v>=0),years)
-        return {"initial_investment":round(down),"monthly_mortgage":round(mp,2),
+        return {"initial_investment":round(down+acq_fees),"monthly_mortgage":round(mp,2),
                 "irr_percent":round(irr,2),"npv_tnd":round(npv_val),
                 "payback_years":pb,"cash_flows":[round(c) for c in cfs]}
 
@@ -531,7 +624,7 @@ class InvestmentScenarioGenerator:
         rem=max(0,profile["budget"]-float(prop.get("price_numeric",0)))
         port_r=self.portfolio_advisor.recommend_diversification([prop],budget=rem)
 
-        verdict=self._verdict(rental,risk,roi_r)
+        verdict=self._verdict(rental,risk,roi_r,mc_rental=mc_r)
         explanations = {
             "yield_source": f"Gross yield {rental['gross_yield']:.2f}% from GlobalPropertyGuide Q2-2025",
             "irr_vs_hurdle": f"IRR {roi_r['irr_percent']:.2f}% vs BCT TMM {self.C['bcт_tmm']*100:.2f}%",
@@ -557,18 +650,36 @@ class InvestmentScenarioGenerator:
             "verdict":verdict, "explanations":explanations,
         }
 
-    def _verdict(self, rental, risk, roi):
+    def _verdict(self, rental, risk, roi, mc_rental=None):
         C=self.C; hurdle=C["bcт_tmm"]*100; irr=roi["irr_percent"]
         gy=rental["gross_yield"]; rl=risk["risk_level"]
         score=0; ins=[]
-        if gy>C["gross_yield_tunis"]*100: score+=30; ins.append(f"Yield {gy:.1f}%>Tunis avg")
-        elif gy>C["gross_yield_national"]*100: score+=20; ins.append(f"Yield {gy:.1f}%>national")
-        else: ins.append(f"Yield {gy:.1f}% below avg")
-        if rl=="Low": score+=30; ins.append("Low risk")
-        elif rl=="Medium": score+=18; ins.append("Medium risk")
-        else: ins.append("High risk")
-        if irr>hurdle+4: score+=40; ins.append(f"IRR {irr:.1f}%>>hurdle {hurdle:.2f}%")
-        elif irr>hurdle: score+=25; ins.append(f"IRR {irr:.1f}%>hurdle")
-        else: ins.append(f"IRR {irr:.1f}%<hurdle {hurdle:.2f}%")
-        rec="STRONG BUY" if score>=70 else "CONSIDER" if score>=50 else "CAUTIOUS" if score>=30 else "AVOID"
+
+        # Yield component — 0-25 pts
+        if gy>C["gross_yield_tunis"]*100:   score+=25; ins.append(f"Yield {gy:.1f}%>Tunis avg")
+        elif gy>C["gross_yield_national"]*100: score+=18; ins.append(f"Yield {gy:.1f}%>national avg")
+        elif gy>4.0:                         score+=10; ins.append(f"Yield {gy:.1f}% moderate")
+        else:                                score+=3;  ins.append(f"Yield {gy:.1f}% below avg")
+
+        # Risk component — 0-25 pts
+        if rl=="Low":    score+=25; ins.append("Low risk profile")
+        elif rl=="Medium": score+=15; ins.append("Medium risk")
+        else:            score+=5;  ins.append("High risk")
+
+        # IRR vs BCT hurdle — 0-30 pts
+        if irr>hurdle+5:       score+=30; ins.append(f"IRR {irr:.1f}% well above hurdle")
+        elif irr>hurdle+2:     score+=22; ins.append(f"IRR {irr:.1f}% above hurdle")
+        elif irr>hurdle:       score+=15; ins.append(f"IRR {irr:.1f}% marginally above hurdle")
+        elif irr>0:            score+=7;  ins.append(f"IRR {irr:.1f}%<hurdle {hurdle:.2f}%")
+        else:                             ins.append(f"Negative/zero IRR ({irr:.1f}%)")
+
+        # Monte Carlo NPV probability — 0-20 pts
+        if mc_rental:
+            prob=mc_rental.get("prob_positive",0)
+            if prob>0.60:   score+=20; ins.append(f"P(NPV>0)={prob*100:.0f}% — strong")
+            elif prob>0.40: score+=12; ins.append(f"P(NPV>0)={prob*100:.0f}% — moderate")
+            elif prob>0.20: score+=5;  ins.append(f"P(NPV>0)={prob*100:.0f}% — weak")
+            else:                      ins.append(f"P(NPV>0)={prob*100:.0f}% — very weak")
+
+        rec="STRONG BUY" if score>=75 else "CONSIDER" if score>=50 else "CAUTIOUS" if score>=30 else "AVOID"
         return {"score":score,"recommendation":rec,"key_insights":ins,"bct_hurdle_used":hurdle}
