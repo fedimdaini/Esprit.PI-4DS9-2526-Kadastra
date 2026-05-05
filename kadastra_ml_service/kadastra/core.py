@@ -44,68 +44,71 @@ def rollback_constants():
 # INPUT VALIDATION
 # ═══════════════════════════════════════════════════════════════════════════
 _MARKET_BOUNDS = {
-    "price_max":              50_000_000,  # 50 M TND (~17 M€) — absolute ceiling
-    "price_min":               5_000,      # 5 k TND — absolute floor
-    "price_per_m2_max":       20_000,      # prime Tunis Lac ultra-luxury
-    "price_per_m2_min":           80,      # rural land minimum
-    "surface_max":            50_000,      # 5 ha terrain — plausible
-    "surface_min":                 5,      # studio minimum
-    "price_per_m2_warn_high": 12_000,      # soft warn — ultra-premium
+    "price_max":              50_000_000,  # 50 M TND (~17 M€) — absolute ceiling for sales
+    "price_per_m2_max":       20_000,      # prime Tunis Lac ultra-luxury ceiling
+    "surface_max":            50_000,      # 5 ha terrain — plausible upper bound
+    "price_per_m2_warn_high": 12_000,      # soft warn — ultra-premium segment
 }
 
 def validate_property_input(prop: dict) -> dict:
     """
-    Guard-rail check against Tunisian real estate market bounds.
+    Guard-rail check against Tunisian real estate market upper bounds only.
     Returns {"valid": bool, "errors": [...], "warnings": [...]}
     Hard errors stop analysis; warnings are shown alongside results.
+    Lower bounds are not enforced — unusual prices may be legitimate.
+
+    Rental properties ("louer") receive relaxed ppm2 checks because their
+    price_numeric may represent a monthly rent that was normalised upstream.
     """
     errors, warnings = [], []
     price   = float(prop.get("price_numeric",   0) or 0)
     surface = float(prop.get("surface_numeric", 0) or 0)
+    is_rental = "louer" in str(prop.get("Type", "")).lower()
 
-    # ── Price ─────────────────────────────────────────────────────────────
+    # ── Price — upper bound only ───────────────────────────────────────────
     if price <= 0:
-        errors.append("Le prix est requis et doit être positif.")
+        if is_rental:
+            # For rentals, price = 0 means no price data; analysis will use
+            # model defaults rather than blocking the request.
+            warnings.append(
+                "Prix non renseigné pour ce bien locatif — l'analyse utilisera "
+                "des valeurs estimées par le modèle."
+            )
+        else:
+            errors.append("Le prix est requis et doit être positif.")
     elif price > _MARKET_BOUNDS["price_max"]:
         errors.append(
             f"Prix de {price:,.0f} TND irréaliste pour le marché tunisien "
             f"(plafond: {_MARKET_BOUNDS['price_max']:,.0f} TND ≈ 17 M€). "
             "Vérifiez la saisie — erreur d'unité probable."
         )
-    elif price < _MARKET_BOUNDS["price_min"]:
-        errors.append(
-            f"Prix de {price:,.0f} TND trop bas pour de l'immobilier "
-            f"(plancher: {_MARKET_BOUNDS['price_min']:,.0f} TND)."
+
+    # ── Surface — upper bound only ────────────────────────────────────────
+    if surface > _MARKET_BOUNDS["surface_max"]:
+        warnings.append(
+            f"Surface de {surface:,.0f} m² très grande — vérifiez si l'unité est correcte."
         )
 
-    # ── Surface ───────────────────────────────────────────────────────────
-    if surface > 0:
-        if surface < _MARKET_BOUNDS["surface_min"]:
-            errors.append(
-                f"Surface de {surface:.1f} m² irréaliste "
-                f"(minimum: {_MARKET_BOUNDS['surface_min']} m²)."
-            )
-        elif surface > _MARKET_BOUNDS["surface_max"]:
-            warnings.append(
-                f"Surface de {surface:,.0f} m² très grande — vérifiez si l'unité est correcte."
-            )
-
-    # ── Price per m² (only if both values look valid) ─────────────────────
-    price_ok   = price > 0 and not any("Prix" in e or "prix" in e for e in errors)
-    surface_ok = 0 < surface >= _MARKET_BOUNDS["surface_min"]
+    # ── Price per m² — hard cap for sales, soft warning for rentals ───────
+    price_ok   = price > 0 and not errors
+    surface_ok = surface > 0
     if price_ok and surface_ok:
         ppm2 = price / surface
         if ppm2 > _MARKET_BOUNDS["price_per_m2_max"]:
-            errors.append(
-                f"Prix au m² de {ppm2:,.0f} TND/m² dépasse le plafond du marché tunisien "
-                f"({_MARKET_BOUNDS['price_per_m2_max']:,.0f} TND/m²). "
-                f"Calcul: {price:,.0f} TND ÷ {surface:.0f} m² = {ppm2:,.0f} TND/m². "
-                "Vérifiez le prix ou la surface."
-            )
-        elif ppm2 < _MARKET_BOUNDS["price_per_m2_min"]:
-            warnings.append(
-                f"Prix au m² de {ppm2:,.0f} TND/m² très bas — terrain non bâti ou erreur de saisie?"
-            )
+            if is_rental:
+                # Rental: ppm2 check is unreliable (price may still be a rent
+                # that slipped through normalisation). Warn, never block.
+                warnings.append(
+                    f"Prix au m² calculé ({ppm2:,.0f} TND/m²) inhabituel pour "
+                    "un bien locatif — l'analyse continuera avec les données fournies."
+                )
+            else:
+                errors.append(
+                    f"Prix au m² de {ppm2:,.0f} TND/m² dépasse le plafond du marché tunisien "
+                    f"({_MARKET_BOUNDS['price_per_m2_max']:,.0f} TND/m²). "
+                    f"Calcul: {price:,.0f} TND ÷ {surface:.0f} m² = {ppm2:,.0f} TND/m². "
+                    "Vérifiez le prix ou la surface."
+                )
         elif ppm2 > _MARKET_BOUNDS["price_per_m2_warn_high"]:
             warnings.append(
                 f"Prix au m² de {ppm2:,.0f} TND/m² — segment ultra-luxe "
@@ -617,6 +620,16 @@ class InvestmentScenarioGenerator:
         roi_r=self.simulator.calculate_roi(prop,yr,scenario="rental")
         roi_f=self.simulator.calculate_roi(prop,yr,scenario="flip")
 
+        # Select primary MC scenario by property type:
+        # rentals → rental scenario; for-sale → exit/flip scenario (buyer will eventually sell)
+        _type_l = str(prop.get("Type","")).lower()
+        if "louer" in _type_l:
+            _primary_mc     = mc_r
+            _scenario_label = "locatif"
+        else:
+            _primary_mc     = mc_f
+            _scenario_label = "revente"
+
         profile["expected_capital_gain"]=max(0,xgb_exit-float(prop.get("price_numeric",0)))
         tax=self.tax_optimizer.optimize_tax_structure(prop,profile)
         risk=self.risk_engine.calculate_overall_risk(prop)
@@ -624,14 +637,33 @@ class InvestmentScenarioGenerator:
         rem=max(0,profile["budget"]-float(prop.get("price_numeric",0)))
         port_r=self.portfolio_advisor.recommend_diversification([prop],budget=rem)
 
-        verdict=self._verdict(rental,risk,roi_r,mc_rental=mc_r)
+        verdict=self._verdict(rental,risk,roi_r,mc_rental=_primary_mc)
+
+        # Financial-only language — no modeling/algorithmic terms
+        _risk_labels = {
+            "location_risk":"Risque localisation","condition_risk":"État du bien",
+            "liquidity_risk":"Liquidité","price_risk":"Risque de prix",
+            "economic_risk":"Risque économique","regulatory_risk":"Risque réglementaire",
+        }
         explanations = {
-            "yield_source": f"Gross yield {rental['gross_yield']:.2f}% from GlobalPropertyGuide Q2-2025",
-            "irr_vs_hurdle": f"IRR {roi_r['irr_percent']:.2f}% vs BCT TMM {self.C['bcт_tmm']*100:.2f}%",
-            "risk_breakdown": {k:f"{v:.3f}" for k,v in risk["component_scores"].items()},
-            "tax_law": f"CGT={tax['capital_gains']['cgt_rate']*100:.0f}% (Code IRPP-IS 2024), IRPP rental={self.C['irpp_rental_flat']*100:.0f}%",
-            "optimal_hold": f"{tax['optimal_holding_years']}yr (Optuna TPE)",
-            "mc_confidence": f"P(NPV>0)={mc_r['prob_positive']*100:.0f}% over {mc_r['n_sims']} paths",
+            "rendement_locatif":  f"Rendement locatif brut {rental['gross_yield']:.2f}% (données marché TN 2025)",
+            "rentabilite_levier": f"Taux de rentabilité annuel {roi_r['irr_percent']:.2f}% vs taux directeur BCT {self.C['bcт_tmm']*100:.2f}%",
+            "composantes_risque": {
+                _risk_labels.get(k,k): f"{float(v)*100:.0f}%"
+                for k,v in risk["component_scores"].items()
+            },
+            "fiscalite": (
+                f"Taxe sur plus-value: {tax['capital_gains']['cgt_rate']*100:.0f}% "
+                f"(Code IRPP-IS 2024) · Impôt locatif: {self.C['irpp_rental_flat']*100:.0f}%"
+            ),
+            "duree_conseille": (
+                f"{tax['optimal_holding_years']} ans recommandés pour maximiser "
+                "la rentabilité après impôts"
+            ),
+            "probabilite_gain": (
+                f"{_primary_mc['prob_positive']*100:.0f}% de probabilité de gain net positif "
+                f"sur {_primary_mc['n_sims']:,} projections (scénario {_scenario_label})"
+            ),
         }
 
         features_list = [k.replace("_"," ") for k in
@@ -644,6 +676,7 @@ class InvestmentScenarioGenerator:
                         "price":prop.get("price_numeric",0),"surface":prop.get("surface_numeric",""),
                         "features":features_list},
             "simulator":{"xgb_exit_price":xgb_exit,"mc_rental":mc_r,"mc_flip":mc_f,
+                          "mc_primary":_primary_mc,"primary_scenario":_scenario_label,
                           "roi_rental":roi_r,"roi_flip":roi_f,"rental_yield":rental},
             "tax":tax, "risk":risk,
             "portfolio":{"analysis":port_a,"recommendations":port_r},

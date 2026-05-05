@@ -9,9 +9,32 @@ Supported intents:
   general          — fallback (Groq LLM or template)
 """
 import re
+import math
 import numpy as np
 import pandas as pd
 from typing import Optional
+
+
+def _safe_int(val, default=0) -> int:
+    """Convert any value (including NaN) to int safely."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if (math.isnan(f) or math.isinf(f)) else int(f)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(val, default=0.0) -> float:
+    """Convert any value (including NaN) to float safely."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if (math.isnan(f) or math.isinf(f)) else f
+    except (ValueError, TypeError):
+        return default
 
 # ── City / keyword tables ─────────────────────────────────────────────────
 CITIES = [
@@ -32,6 +55,10 @@ PROP_TYPES_MAP = {
     "commercial":  ["Local commercial a vendre","Local commercial a louer"],
     "local":       ["Local commercial a vendre","Local commercial a louer"],
 }
+
+# Narrow to sale-only or rental-only when explicitly mentioned
+_SALE_KWS   = ["vendre","vente","achat","acheter","acqui"]
+_RENTAL_KWS = ["louer","location","locatif","locat"]
 
 DEAL_KWS    = ["meilleur","meilleures","bon plan","bons plans","deal","affaire",
                "opportunit","moins cher","pas cher","annonce","cherche","trouve",
@@ -66,11 +93,24 @@ def detect_intent(text: str) -> dict:
         except ValueError:
             pass
 
-    # Property type
+    # Property type — narrow to sale or rental if explicitly stated
+    _is_sale   = any(kw in t for kw in _SALE_KWS)
+    _is_rental = any(kw in t for kw in _RENTAL_KWS)
     for kw, types in PROP_TYPES_MAP.items():
         if kw in t:
-            params["prop_types"] = types
+            if _is_sale and not _is_rental:
+                params["prop_types"] = [tp for tp in types if "vendre" in tp]
+            elif _is_rental and not _is_sale:
+                params["prop_types"] = [tp for tp in types if "louer" in tp]
+            else:
+                params["prop_types"] = types
             break
+    # If no type keyword but sale/rental specified, store the filter
+    if "prop_types" not in params:
+        if _is_sale and not _is_rental:
+            params["sale_only"] = True
+        elif _is_rental and not _is_sale:
+            params["rental_only"] = True
 
     # Top-N
     nm = re.search(r'top\s*(\d+)|(\d+)\s*(?:meilleures?|bons?\s*plans?|deals?|annonces?)', t)
@@ -101,6 +141,8 @@ def search_deals(df: pd.DataFrame, params: dict) -> dict:
 
     if params.get("prop_types"):
         mask &= df["Type"].isin(params["prop_types"])
+    elif params.get("rental_only"):
+        mask &= df["Type"].fillna("").str.contains("louer", na=False)
     else:
         # Default: for-sale only
         mask &= df["Type"].fillna("").str.contains("vendre", na=False)
@@ -115,28 +157,34 @@ def search_deals(df: pd.DataFrame, params: dict) -> dict:
             "message": "Aucune annonce trouvée avec ces critères. Essayez d'élargir la zone ou le budget.",
         }
 
-    # Price per m²
-    subset["_ppm2"] = (
-        subset["price_numeric"] / subset["surface_numeric"].replace(0, np.nan)
-    )
+    # Price per m² — guard against zeros/NaN
+    with np.errstate(divide='ignore', invalid='ignore'):
+        subset["_ppm2"] = np.where(
+            subset["surface_numeric"].fillna(0) > 0,
+            subset["price_numeric"] / subset["surface_numeric"],
+            np.nan
+        )
+    subset["_ppm2"] = pd.to_numeric(subset["_ppm2"], errors='coerce').fillna(0.0)
 
     # Value score: below-median price/m² = positive, above = negative
-    type_med = subset.groupby("Type")["_ppm2"].transform("median")
-    subset["_val"] = (type_med - subset["_ppm2"]) / (type_med.clip(lower=1) + 1e-9)
+    type_med = subset.groupby("Type")["_ppm2"].transform("median").fillna(0.0)
+    denom    = type_med.clip(lower=1.0) + 1e-9
+    subset["_val"] = ((type_med - subset["_ppm2"]) / denom).fillna(0.0)
 
     # Bonus for amenities
     for feat in ["parking","ascenseur","balcon_terrasse","jardin","neuf"]:
         if feat in subset.columns:
-            subset["_val"] += subset[feat].fillna(0).astype(float) * 0.02
+            subset["_val"] += pd.to_numeric(subset[feat], errors='coerce').fillna(0) * 0.02
 
-    subset = subset.sort_values("_val", ascending=False)
+    subset["_val"] = subset["_val"].fillna(0.0)
+    subset = subset.sort_values("_val", ascending=False, na_position='last')
     top_n = min(params.get("top_n", 5), 20)
     top   = subset.head(top_n)
 
     deals = []
     for _, row in top.iterrows():
-        price   = float(row.get("price_numeric", 0) or 0)
-        surface = float(row.get("surface_numeric", 0) or 0)
+        price   = _safe_float(row.get("price_numeric", 0))
+        surface = _safe_float(row.get("surface_numeric", 0))
         ppm2    = price / surface if surface > 0 else 0
         deals.append({
             "titre":       str(row.get("titre", row.get("Type", "—")))[:80],
@@ -145,13 +193,13 @@ def search_deals(df: pd.DataFrame, params: dict) -> dict:
             "prix":        round(price),
             "surface":     round(surface, 1),
             "prix_m2":     round(ppm2),
-            "value_score": round(float(row["_val"]) * 100, 1),
-            "pieces":      int(row.get("pieces", 0) or 0),
-            "chambres":    int(row.get("chambres", 0) or 0),
+            "value_score": round(_safe_float(row.get("_val", 0)) * 100, 1),
+            "pieces":      _safe_int(row.get("pieces", 0)),
+            "chambres":    _safe_int(row.get("chambres", 0)),
             "features":    [
                 k.replace("_", " ")
                 for k in ["parking","ascenseur","balcon_terrasse","jardin","piscine","neuf","meuble"]
-                if row.get(k, 0) == 1
+                if _safe_int(row.get(k, 0)) == 1
             ],
         })
 
@@ -177,6 +225,11 @@ def analyze_market(df: pd.DataFrame, params: dict) -> dict:
 
     if params.get("prop_types"):
         mask &= df["Type"].isin(params["prop_types"])
+    elif params.get("sale_only"):
+        mask &= df["Type"].fillna("").str.contains("vendre", na=False)
+    elif params.get("rental_only"):
+        mask &= df["Type"].fillna("").str.contains("louer", na=False)
+    # else: analyse all listings for that location
 
     subset = df[mask].copy()
     if subset.empty:

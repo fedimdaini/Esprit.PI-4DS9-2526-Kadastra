@@ -94,11 +94,78 @@ class ChatRequest(BaseModel):
     text: str
     groq_key: Optional[str] = None   # client may pass own key; fallback to env
 
+class PredictPricesRequest(BaseModel):
+    properties: List[PropertyInput]
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 def _check_loaded():
     if _generator is None:
         raise HTTPException(status_code=503, detail="Models not loaded yet")
+
+# Rental type → nearest sale equivalent for XGBoost lookup
+_SALE_EQUIV = {
+    "Appartement a louer":      "Appartement a vendre",
+    "Maison a louer":           "Maison a vendre",
+    "Villa a louer":            "Villa a vendre",
+    "Studio a louer":           "Studio a vendre",
+    "Bureau a louer":           "Bureau a vendre",
+    "Local commercial a louer": "Local commercial a vendre",
+}
+# National gross yield used to back-calculate purchase price from monthly rent
+_NATIONAL_YIELD = 0.0543
+
+def _normalize_missing_price(prop: dict, profile: dict | None) -> tuple[dict, list[str]]:
+    """
+    Resolve price issues before validation so analysis is always meaningful.
+
+    Three cases handled in order:
+
+    A. ANY type — price == 0 (listing had no price / "Prix à consulter"):
+       → Use XGBoost to estimate market value.
+       → Add a prominent warning so the chatbot explicitly tells the user.
+
+    B. RENTAL type — 0 < price < 20 000 TND (clearly a monthly rent, not a purchase price):
+       → Convert: estimated_purchase = monthly_rent × 12 / national_gross_yield (5.43%)
+       → Store the annual rent in profile["rental_income"] so yield calculations are accurate.
+       → Add a warning explaining the conversion.
+
+    C. Everything else — price is already a valid purchase price → pass through unchanged.
+    """
+    extra_warnings: list[str] = []
+    price     = float(prop.get("price_numeric", 0) or 0)
+    is_rental = "louer" in str(prop.get("Type", "")).lower()
+
+    # ── Case A: no price at all (Prix à consulter or missing field) ───────
+    if price <= 0:
+        proxy_type = _SALE_EQUIV.get(prop.get("Type", ""), prop.get("Type", "Appartement a vendre"))
+        proxy = {**prop, "Type": proxy_type, "price_numeric": 0}
+        try:
+            estimated = float(_generator.simulator.predict_exit_price(proxy, years=0))
+            if estimated > 0:
+                prop = {**prop, "price_numeric": round(estimated)}
+                extra_warnings.append(
+                    f"Prix à consulter — aucun prix original disponible. "
+                    f"L'analyse utilise une estimation marché: "
+                    f"{round(estimated):,} TND. Les résultats sont indicatifs."
+                )
+        except Exception:
+            pass  # price stays 0; validate_property_input will add a soft warning for rentals
+        return prop, extra_warnings
+
+    # ── Case B: rental with a monthly rent instead of a purchase price ────
+    if is_rental and price < 20_000:
+        estimated_purchase = round(price * 12 / _NATIONAL_YIELD)
+        prop = {**prop, "price_numeric": estimated_purchase}
+        if profile is not None:
+            profile["rental_income"] = price * 12
+        extra_warnings.append(
+            f"Prix interprété comme loyer mensuel ({price:,.0f} TND/mois) — "
+            f"valeur vénale estimée: {estimated_purchase:,} TND"
+        )
+
+    return prop, extra_warnings
+
 
 def _run_validation(prop: dict):
     """Run validation and raise 422 if there are hard errors."""
@@ -150,10 +217,13 @@ async def analyze(req: AnalyzeRequest):
         if prop[k] is None:
             prop[k] = 0
 
-    # ── Sanity check ──
-    warnings = _run_validation(prop)
-
     profile = req.profile.dict() if req.profile else None
+
+    # ── Rental price normalisation (must run BEFORE validation) ──
+    prop, extra_warnings = _normalize_missing_price(prop, profile)
+
+    # ── Sanity check ──
+    warnings = extra_warnings + _run_validation(prop)
 
     try:
         scenario = _generator.generate_investment_scenario(prop, profile)
@@ -196,9 +266,6 @@ async def quick_analyze(req: QuickAnalyzeRequest):
     for k in ["pieces","chambres","sallesdebain"]:
         prop_dict.setdefault(k, 0)
 
-    # ── Sanity check ──
-    warnings = _run_validation(prop_dict)
-
     profile = {
         "budget":               req.budget or 300_000,
         "holding_period_years": req.holding_years or 5,
@@ -207,6 +274,12 @@ async def quick_analyze(req: QuickAnalyzeRequest):
         "is_new_promoter":      prop_dict.get("neuf", 0) == 1,
         "risk_tolerance":       "medium",
     }
+
+    # ── Rental price normalisation (must run BEFORE validation) ──
+    prop_dict, extra_warnings = _normalize_missing_price(prop_dict, profile)
+
+    # ── Sanity check ──
+    warnings = extra_warnings + _run_validation(prop_dict)
 
     t0 = time.time()
     try:
@@ -222,19 +295,21 @@ async def quick_analyze(req: QuickAnalyzeRequest):
     r = scenario["risk"]
     t = scenario["tax"]
 
+    mc_primary = s.get("mc_primary", s["mc_rental"])   # honour scenario selection
     return {
         "verdict":   v["recommendation"],
         "score":     v["score"],
         "summary":   f"{v['recommendation']} ({v['score']}/100)",
+        "primary_scenario": s.get("primary_scenario", "locatif"),
         "financials": {
             "gross_yield":            s["rental_yield"]["gross_yield"],
             "net_yield":              s["rental_yield"]["net_yield"],
             "irr_percent":            s["roi_rental"]["irr_percent"],
             "monthly_rent_estimate":  s["rental_yield"]["estimated_monthly_rent"],
-            "npv_p5":                 s["mc_rental"]["npv_p5"],
-            "npv_p50":                s["mc_rental"]["npv_p50"],
-            "npv_p95":                s["mc_rental"]["npv_p95"],
-            "prob_positive_npv":      s["mc_rental"]["prob_positive"],
+            "npv_p5":                 mc_primary["npv_p5"],
+            "npv_p50":                mc_primary["npv_p50"],
+            "npv_p95":                mc_primary["npv_p95"],
+            "prob_positive_npv":      mc_primary["prob_positive"],
             "initial_investment":     s["roi_rental"]["initial_investment"],
             "monthly_mortgage":       s["roi_rental"]["monthly_mortgage"],
         },
@@ -258,6 +333,41 @@ async def quick_analyze(req: QuickAnalyzeRequest):
         "warnings":         warnings,
         "elapsed_seconds":  round(elapsed, 2),
     }
+
+
+@app.post("/api/predict-prices")
+async def predict_prices(req: PredictPricesRequest):
+    """
+    Batch XGBoost price prediction for listings that have no listed price.
+    Called by the Django backend when serving listings with 'Prix à consulter'.
+    Returns current market value estimates (years=0 appreciation).
+    """
+    _check_loaded()
+    predictions = []
+    _SALE_EQUIV = {  # map rental types to nearest sale type for XGBoost lookup
+        "Appartement a louer": "Appartement a vendre",
+        "Maison a louer":      "Maison a vendre",
+        "Villa a louer":       "Villa a vendre",
+        "Studio a louer":      "Studio a vendre",
+        "Bureau a louer":      "Bureau a vendre",
+        "Local commercial a louer": "Local commercial a vendre",
+    }
+    for prop_input in req.properties:
+        prop = prop_input.dict()
+        for k in ["pieces", "chambres", "sallesdebain"]:
+            if prop[k] is None:
+                prop[k] = 0
+        # If type not in models, try sale equivalent
+        sim = _generator.simulator
+        if prop["Type"] not in sim._xgb_models:
+            prop["Type"] = _SALE_EQUIV.get(prop["Type"], prop["Type"])
+        try:
+            predicted = sim.predict_exit_price(prop, years=0)
+            val = float(predicted)
+            predictions.append(round(val) if val > 0 else None)
+        except Exception:
+            predictions.append(None)
+    return {"predictions": predictions}
 
 
 @app.post("/api/chat")

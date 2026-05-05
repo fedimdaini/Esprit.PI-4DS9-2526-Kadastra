@@ -16,7 +16,19 @@ function fireKadastraAttach(listing) {
 }
 
 export default function ListingCard({ listing, onClick }) {
-  const { titre, prix, adresse, localisation, pieces, chambres, salles_de_bain, surface, source, first_image } = listing;
+  const {
+    titre, prix, adresse, localisation, pieces, chambres, salles_de_bain, surface,
+    source, first_image,
+    price_numeric, original_currency,
+  } = listing;
+
+  // Build the display price string — only real prices from the database
+  const displayPrice = (() => {
+    if (original_currency === 'EUR' && price_numeric && prix)
+      return `${prix} ≈ ${price_numeric.toLocaleString('fr-TN')} TND`;
+    if (prix && prix !== 'N/A') return prix;
+    return 'Prix à consulter';
+  })();
 
   return (
     <div className="card fade-in" onClick={onClick} style={{ cursor: 'pointer', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -42,10 +54,20 @@ export default function ListingCard({ listing, onClick }) {
         )}
 
         {/* Badges */}
-        <div style={{ position: 'absolute', top: 12, left: 12, display: 'flex', gap: 6 }}>
+        <div style={{ position: 'absolute', top: 12, left: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <span className={`badge badge-${source}`} style={{ boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }}>
             {source === 'mubawab' ? 'Mubawab' : 'Tayara'}
           </span>
+          {original_currency === 'EUR' && price_numeric && (
+            <span style={{
+              background: 'linear-gradient(135deg,#0EA5E9,#0284C7)',
+              color: 'white', fontSize: 10, fontWeight: 700,
+              padding: '3px 8px', borderRadius: 6,
+              boxShadow: '0 4px 10px rgba(0,0,0,0.1)',
+            }}>
+              € → TND
+            </span>
+          )}
         </div>
       </div>
 
@@ -75,8 +97,10 @@ export default function ListingCard({ listing, onClick }) {
         </div>
 
         <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-light)', paddingTop: 14 }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.5px' }}>
-            {prix || 'Prix à consulter'}
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.5px' }}>
+              {displayPrice}
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
@@ -84,12 +108,13 @@ export default function ListingCard({ listing, onClick }) {
               title="Analyser avec Kadastra AI"
               style={{
                 background: 'linear-gradient(135deg,#3B82F6,#1D4ED8)',
-                border: 'none', borderRadius: 8, padding: '5px 10px',
+                border: 'none', borderRadius: 8, padding: '6px 12px',
                 color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', gap: 4,
+                whiteSpace: 'nowrap',
               }}
             >
-              📊 IA
+              Ask AI
             </button>
             <div style={{
               width: 32, height: 32, borderRadius: '50%', background: 'var(--primary-light)',

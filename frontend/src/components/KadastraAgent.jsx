@@ -44,6 +44,14 @@ const BLANK_PROFILE = {
   first_time_buyer:true, is_new_promoter:false, risk_tolerance:'medium',
 };
 
+// Keywords that trigger a verdict explanation (no API call needed)
+const EXPLAIN_KWS = [
+  'pourquoi','expliquez','expliquer','explique','comment','que signifie',
+  'que veut dire','c\'est quoi','clarif','détaille','détailler','why','explain',
+  'dis moi plus','plus d\'info','développe',
+];
+function isExplainRequest(t) { return EXPLAIN_KWS.some(w => t.toLowerCase().includes(w)); }
+
 // Keywords that trigger /api/chat instead of analysis
 const CHAT_KWS = [
   'meilleur','meilleures','bon plan','bons plans','deal','affaire','opportunit',
@@ -58,8 +66,27 @@ function isGuideRequest(t){ return GUIDE_KWS.some(w => t.toLowerCase().includes(
 
 // ─── Data helpers ──────────────────────────────────────────────────────────
 function listingToProperty(l) {
+  // Django serializer returns the type as `type` (lowercase).
+  // type_bien / Type are aliases used in other contexts — check all three.
+  const rawType = l.type_bien || l.Type || l.type || '';
+
+  // Detect rental from the type field OR from keywords in the title/description,
+  // so even mis-classified DB entries are handled correctly.
+  const titleLower = String(l.titre || l.title || '').toLowerCase();
+  const isRental = /louer|location|locatif|locat/.test(rawType.toLowerCase())
+                || /\bà louer\b|à l'année|location/.test(titleLower);
+
+  // Map to the canonical ML type string
+  let canonicalType = rawType;
+  if (!canonicalType) {
+    canonicalType = isRental ? 'Appartement a louer' : 'Appartement a vendre';
+  } else if (isRental && /vendre/.test(canonicalType.toLowerCase())) {
+    // DB has "vendre" but the listing is actually for rent — correct it
+    canonicalType = canonicalType.replace(/a vendre/i, 'a louer');
+  }
+
   return {
-    Type: l.type_bien || l.Type || 'Appartement a vendre',
+    Type: canonicalType,
     Adresse: l.adresse || l.Adresse || l.localisation || 'Tunis',
     price_numeric: l.price_numeric || parseFloat(String(l.prix||'').replace(/[^\d.]/g,'')) || 0,
     surface_numeric: l.surface_numeric || parseFloat(l.surface) || 0,
@@ -96,19 +123,21 @@ function profileFormToPayload(f) {
 
 /** Map /api/analyze response → same flat shape as /api/quick-analyze */
 function transformFullScenario(data) {
-  const s = data.scenario;
+  const s  = data.scenario;
+  const mc = s.simulator.mc_primary || s.simulator.mc_rental;  // honour scenario selection
   return {
-    verdict: s.verdict.recommendation,
-    score:   s.verdict.score,
+    verdict:          s.verdict.recommendation,
+    score:            s.verdict.score,
+    primary_scenario: s.simulator.primary_scenario || 'locatif',
     financials: {
       gross_yield:           s.simulator.rental_yield.gross_yield,
       net_yield:             s.simulator.rental_yield.net_yield,
       irr_percent:           s.simulator.roi_rental.irr_percent,
       monthly_rent_estimate: s.simulator.rental_yield.estimated_monthly_rent,
-      npv_p5:                s.simulator.mc_rental.npv_p5,
-      npv_p50:               s.simulator.mc_rental.npv_p50,
-      npv_p95:               s.simulator.mc_rental.npv_p95,
-      prob_positive_npv:     s.simulator.mc_rental.prob_positive,
+      npv_p5:                mc.npv_p5,
+      npv_p50:               mc.npv_p50,
+      npv_p95:               mc.npv_p95,
+      prob_positive_npv:     mc.prob_positive,
       initial_investment:    s.simulator.roi_rental.initial_investment,
       monthly_mortgage:      s.simulator.roi_rental.monthly_mortgage,
     },
@@ -376,80 +405,121 @@ function ProfileForm({ form, setForm, onConfirm, onCancel }) {
   );
 }
 
-// ─── NORMAL result card ────────────────────────────────────────────────────
+// ─── NORMAL result card — plain French, zero jargon ────────────────────────
 const VERDICT_LABELS = {
   'STRONG BUY': '✅ Excellent investissement',
   'CONSIDER':   '🟡 À considérer',
   'CAUTIOUS':   '🟠 Prudence recommandée',
   'AVOID':      '🔴 À éviter',
 };
-const VERDICT_EXPLAIN = {
-  'STRONG BUY': 'Ce bien coche toutes les cases : rendement solide, risque maîtrisé et rentabilité à long terme supérieure aux dépôts bancaires.',
-  'CONSIDER':   'Ce bien présente un potentiel correct mais quelques points méritent attention avant de s\'engager.',
-  'CAUTIOUS':   'Des signaux d\'alerte subsistent. Une négociation du prix ou un horizon de détention plus long pourrait améliorer l\'équation.',
-  'AVOID':      'Le rapport rendement / risque est défavorable pour ce bien au prix actuel.',
-};
+
+function buildNormalExplanation(verdict, score, f, risk, tax, scenario) {
+  const lines = [];
+  // Score sentence
+  if (score >= 75)
+    lines.push(`Ce bien obtient une note de ${score}/100 et cumule des indicateurs très favorables.`);
+  else if (score >= 50)
+    lines.push(`Avec une note de ${score}/100, ce bien présente un potentiel intéressant mais quelques points méritent attention.`);
+  else if (score >= 30)
+    lines.push(`Note de ${score}/100 : des risques significatifs ou un rendement limité pèsent sur l'attractivité de ce bien.`);
+  else
+    lines.push(`Note de ${score}/100 : la combinaison de risques élevés et de faible rendement rend cet investissement peu recommandé.`);
+
+  // Yield sentence
+  const gy = f?.gross_yield || 0;
+  if (gy > 7.5)       lines.push(`Le loyer potentiel représente un rendement de ${gy.toFixed(1)}% du prix, bien au-dessus de la moyenne nationale (5.4%) — c'est un bon signe.`);
+  else if (gy > 5)    lines.push(`Le loyer potentiel représente ${gy.toFixed(1)}% du prix, dans la moyenne tunisienne.`);
+  else                lines.push(`Le loyer potentiel de ${gy.toFixed(1)}% est en dessous de la moyenne nationale (~5.4%).`);
+
+  // Scenario sentence
+  if (scenario === 'revente')
+    lines.push("Analyse réalisée en scénario de revente : l'investisseur achète, conserve quelques années, puis revend avec plus-value.");
+  else
+    lines.push("Analyse réalisée en scénario locatif : l'investisseur perçoit des loyers tout au long de la détention.");
+
+  // Risk sentence
+  if (risk?.level === 'Low')
+    lines.push("Le profil de risque est faible — c'est rassurant pour un placement à long terme.");
+  else if (risk?.level === 'Medium') {
+    lines.push(`Risque modéré.${risk?.flags?.[0] ? ' Point d\'attention : ' + risk.flags[0] + '.' : ''}`);
+  } else {
+    lines.push(`Risque élevé. ${(risk?.flags || []).slice(0,2).join(', ')}.`);
+  }
+
+  // Tax tip
+  if (tax?.optimal_holding_years >= 10)
+    lines.push(`Conseil fiscal : conserver ce bien au moins ${tax.optimal_holding_years} ans permet de réduire l'impôt sur la plus-value de moitié.`);
+
+  return lines;
+}
 
 function NormalResultCard({ data }) {
-  const { verdict, score, financials: f, risk, tax, warnings } = data;
-  const label = VERDICT_LABELS[verdict] || verdict;
+  const { verdict, score, financials: f, risk, tax, warnings, primary_scenario } = data;
+  const label     = VERDICT_LABELS[verdict] || verdict;
   const riskColor = risk?.level==='Low'?'#4ADE80': risk?.level==='Medium'?'#FBBF24':'#F87171';
   const riskLabel = risk?.level==='Low'?'🟢 Faible': risk?.level==='Medium'?'🟡 Moyen':'🔴 Élevé';
+  const lines     = buildNormalExplanation(verdict, score, f, risk, tax, primary_scenario);
 
   return (
     <div style={S.msgBot}>
       <WarningBanner warnings={warnings}/>
 
       <div style={S.verdictBadge(verdict)}>{label}</div>
-      <p style={{ color:'#CBD5E1', fontSize:13, lineHeight:1.65, marginTop:4, marginBottom:12 }}>
-        {VERDICT_EXPLAIN[verdict] || ''}
-      </p>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
+      {lines.map((l,i) => (
+        <p key={i} style={{ color:'#CBD5E1', fontSize:13, lineHeight:1.7,
+          marginTop: i===0?6:4, marginBottom:0 }}>{l}</p>
+      ))}
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:14, marginBottom:10 }}>
         <MetricPill label="Loyer mensuel estimé"
           value={`${(f?.monthly_rent_estimate||0).toLocaleString('fr-TN')} TND`}
           accent="#93C5FD"/>
-        <MetricPill label="Rendement brut"
-          value={`${f?.gross_yield?.toFixed(1)}%`}
-          accent={f?.gross_yield > 7 ? '#4ADE80' : f?.gross_yield > 5 ? '#FBBF24' : '#F87171'}/>
+        <MetricPill label="Rendement annuel brut"
+          value={`${(f?.gross_yield||0).toFixed(1)}%`}
+          accent={(f?.gross_yield||0) > 7 ? '#4ADE80' : (f?.gross_yield||0) > 5 ? '#FBBF24' : '#F87171'}/>
         <MetricPill label="Niveau de risque"
           value={riskLabel}
           accent={riskColor}/>
-        <MetricPill label="Durée idéale"
-          value={`${tax?.optimal_holding_years} ans`}
+        <MetricPill label="Durée de détention idéale"
+          value={`${tax?.optimal_holding_years || '—'} ans`}
           accent="#E2E8F0"/>
       </div>
 
-      {(risk?.flags||[]).length > 0 && (
-        <div style={{ marginBottom:10 }}>
-          <div style={{ color:'#94A3B8', fontSize:11, marginBottom:4 }}>⚠️ Points d'attention :</div>
-          {risk.flags.map((fl,i) =>
-            <div key={i} style={{ color:'#FCA5A5', fontSize:12, marginBottom:2 }}>• {fl}</div>
-          )}
-        </div>
-      )}
       {(risk?.mitigation||[]).length > 0 && (
         <div style={{ marginBottom:8 }}>
-          <div style={{ color:'#94A3B8', fontSize:11, marginBottom:4 }}>💡 Conseils :</div>
+          <div style={{ color:'#94A3B8', fontSize:11, marginBottom:4 }}>💡 Recommandations :</div>
           {risk.mitigation.map((m,i) =>
             <div key={i} style={{ color:'#86EFAC', fontSize:12, marginBottom:2 }}>• {m}</div>
           )}
         </div>
       )}
 
-      <div style={{ fontSize:10, color:'#475569', borderTop:'1px solid #1E293B',
-        paddingTop:6, marginTop:6 }}>
-        Score: {score}/100 · {tax?.cgt_note}
-        {data.elapsed_seconds != null && ` · ${data.elapsed_seconds}s`}
+      <div style={{ fontSize:10, color:'#475569', borderTop:'1px solid #1E293B', paddingTop:6, marginTop:8 }}>
+        Score: {score}/100
+        {data.elapsed_seconds != null && ` · Analyse en ${data.elapsed_seconds}s`}
       </div>
     </div>
   );
 }
 
-// ─── EXPERT result card ────────────────────────────────────────────────────
+// ─── EXPERT result card — financial metrics, zero data-science terms ────────
+const RISK_LABELS = {
+  location_risk:   'Risque localisation',
+  condition_risk:  'État du bien',
+  liquidity_risk:  'Liquidité',
+  price_risk:      'Risque de prix',
+  economic_risk:   'Risque économique',
+  regulatory_risk: 'Risque réglementaire',
+};
+
 function ExpertResultCard({ data }) {
   const hurdle = 7.49;
-  const { verdict, score, financials: f, risk, tax, insights, holding_sweep, explanations, warnings } = data;
+  const {
+    verdict, score, financials: f, risk, tax,
+    insights, holding_sweep, explanations, warnings, primary_scenario,
+  } = data;
+  const scenarioLabel = primary_scenario === 'revente' ? 'Revente' : 'Locatif';
 
   return (
     <div style={S.msgBot}>
@@ -457,14 +527,15 @@ function ExpertResultCard({ data }) {
 
       <div style={S.verdictBadge(verdict)}>{verdict} — {score}/100</div>
 
-      <SectionTitle>📈 RENDEMENT & CASH-FLOW</SectionTitle>
+      <SectionTitle>📈 RENDEMENT & FINANCEMENT</SectionTitle>
       {[
-        ['Gross Yield',         `${f?.gross_yield?.toFixed(2)}%`],
-        ['Net Yield',           `${f?.net_yield?.toFixed(2)}%`],
-        ['IRR (avec levier)',   `${f?.irr_percent?.toFixed(2)}%`, f?.irr_percent > hurdle?'#4ADE80':'#F87171'],
-        ['Loyer mensuel est.',  `${(f?.monthly_rent_estimate||0).toLocaleString('fr-TN')} TND`],
-        ['Apport + frais',      `${(f?.initial_investment||0).toLocaleString('fr-TN')} TND`],
-        ['Mensualité crédit',   `${(f?.monthly_mortgage||0).toLocaleString('fr-TN')} TND`],
+        ['Rendement locatif brut',   `${(f?.gross_yield||0).toFixed(2)}%`],
+        ['Rendement locatif net',    `${(f?.net_yield||0).toFixed(2)}%`],
+        ['Taux de rentabilité annuel',`${(f?.irr_percent||0).toFixed(2)}%`,
+          (f?.irr_percent||0) > hurdle ? '#4ADE80' : '#F87171'],
+        ['Loyer mensuel estimé',     `${(f?.monthly_rent_estimate||0).toLocaleString('fr-TN')} TND`],
+        ['Apport initial (+ frais)', `${(f?.initial_investment||0).toLocaleString('fr-TN')} TND`],
+        ['Mensualité crédit',        `${(f?.monthly_mortgage||0).toLocaleString('fr-TN')} TND`],
       ].map(([k,v,c]) => (
         <div key={k} style={S.metricRow}>
           <span style={{ color:'#94A3B8' }}>{k}</span>
@@ -472,12 +543,13 @@ function ExpertResultCard({ data }) {
         </div>
       ))}
 
-      <SectionTitle>🎲 MONTE CARLO (10 000 simulations)</SectionTitle>
+      <SectionTitle>🎯 PROJECTIONS DE SCÉNARIOS ({scenarioLabel})</SectionTitle>
       {[
-        ['NPV P5 (pessimiste)',  `${(f?.npv_p5 ||0).toLocaleString('fr-TN')} TND`],
-        ['NPV P50 (médiane)',    `${(f?.npv_p50||0).toLocaleString('fr-TN')} TND`],
-        ['NPV P95 (optimiste)', `${(f?.npv_p95||0).toLocaleString('fr-TN')} TND`],
-        ['P(NPV > 0)',          `${(((f?.prob_positive_npv)||0)*100).toFixed(0)}%`,
+        ['Scénario pessimiste', `${(f?.npv_p5 ||0).toLocaleString('fr-TN')} TND`],
+        ['Scénario médian',     `${(f?.npv_p50||0).toLocaleString('fr-TN')} TND`],
+        ['Scénario optimiste',  `${(f?.npv_p95||0).toLocaleString('fr-TN')} TND`],
+        ['Probabilité de gain net',
+          `${(((f?.prob_positive_npv)||0)*100).toFixed(0)}%`,
           (f?.prob_positive_npv||0)>0.6?'#4ADE80': (f?.prob_positive_npv||0)>0.4?'#FBBF24':'#F87171'],
       ].map(([k,v,c]) => (
         <div key={k} style={S.metricRow}>
@@ -486,16 +558,18 @@ function ExpertResultCard({ data }) {
         </div>
       ))}
 
-      <SectionTitle>⚠️ RISQUE — {risk?.level} ({risk?.score?.toFixed(3)})</SectionTitle>
+      <SectionTitle>⚠️ PROFIL DE RISQUE — {risk?.level} ({((risk?.score||0)*100).toFixed(0)}/100)</SectionTitle>
       {risk?.components && Object.entries(risk.components).map(([k,v]) => (
-        <div key={k} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
-          <span style={{ color:'#94A3B8', fontSize:11 }}>{k.replace(/_/g,' ')}</span>
+        <div key={k} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:5 }}>
+          <span style={{ color:'#94A3B8', fontSize:11 }}>{RISK_LABELS[k] || k.replace(/_/g,' ')}</span>
           <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <div style={{ width:70, height:4, borderRadius:2, background:'#0F172A' }}>
+            <div style={{ width:72, height:4, borderRadius:2, background:'#0F172A' }}>
               <div style={{ width:`${v*100}%`, height:'100%', borderRadius:2,
                 background: v<0.3?'#4ADE80': v<0.6?'#FBBF24':'#F87171' }}/>
             </div>
-            <span style={{ color:'#E2E8F0', fontSize:11, width:28, textAlign:'right' }}>{(v*100).toFixed(0)}%</span>
+            <span style={{ color:'#E2E8F0', fontSize:11, width:28, textAlign:'right' }}>
+              {(v*100).toFixed(0)}%
+            </span>
           </div>
         </div>
       ))}
@@ -510,9 +584,10 @@ function ExpertResultCard({ data }) {
 
       <SectionTitle>🏛️ FISCALITÉ</SectionTitle>
       {[
-        ['Frais d\'acquisition',  `${tax?.acquisition_fees_pct?.toFixed(2)}% — ${(tax?.acquisition_fees_tnd||0).toLocaleString('fr-TN')} TND`],
-        ['Durée optimale (Optuna)', `${tax?.optimal_holding_years} ans`],
-        ['TIB annuel',             `${(tax?.annual_taxes?.tib||0).toLocaleString('fr-TN')} TND`],
+        ['Frais d\'acquisition',
+          `${(tax?.acquisition_fees_pct||0).toFixed(2)}% — ${(tax?.acquisition_fees_tnd||0).toLocaleString('fr-TN')} TND`],
+        ['Durée de détention optimale', `${tax?.optimal_holding_years} ans`],
+        ['Taxe foncière annuelle (TIB)', `${(tax?.annual_taxes?.tib||0).toLocaleString('fr-TN')} TND`],
       ].map(([k,v]) => (
         <div key={k} style={S.metricRow}>
           <span style={{ color:'#94A3B8' }}>{k}</span>
@@ -521,39 +596,107 @@ function ExpertResultCard({ data }) {
       ))}
       {tax?.cgt_note && <div style={{ fontSize:11, color:'#64748B', marginTop:4 }}>{tax.cgt_note}</div>}
 
-      <SectionTitle>💡 INSIGHTS CLÉS</SectionTitle>
+      <SectionTitle>💡 POINTS CLÉS</SectionTitle>
       {(insights||[]).map((ins,i) => (
         <span key={i} style={{ display:'inline-block', background:'#1E3A5F', color:'#93C5FD',
           padding:'2px 8px', borderRadius:4, fontSize:11, margin:'2px 3px 2px 0' }}>{ins}</span>
       ))}
 
       {(holding_sweep||[]).length > 0 && <>
-        <SectionTitle>📊 TRI PAR DURÉE DE DÉTENTION</SectionTitle>
+        <SectionTitle>📊 RENTABILITÉ PAR DURÉE DE DÉTENTION</SectionTitle>
         {holding_sweep.map(r => (
           <div key={r.years} style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
             <span style={{ width:30, fontSize:10, color:'#94A3B8', textAlign:'right' }}>{r.years}yr</span>
             <div style={{ flex:1 }}><div style={S.sweepBar(r.irr_pct, hurdle)}/></div>
-            <span style={{ width:44, fontSize:10, color: r.irr_pct>=hurdle?'#4ADE80':'#94A3B8', textAlign:'right', fontWeight:600 }}>
+            <span style={{ width:44, fontSize:10,
+              color: r.irr_pct>=hurdle?'#4ADE80':'#94A3B8', textAlign:'right', fontWeight:600 }}>
               {r.irr_pct?.toFixed(1)}%
             </span>
           </div>
         ))}
-        <div style={{ fontSize:10, color:'#EF4444', marginTop:2 }}>── Seuil BCT TMM: {hurdle}% ──</div>
+        <div style={{ fontSize:10, color:'#EF4444', marginTop:2 }}>
+          ── Seuil taux directeur BCT: {hurdle}% ──
+        </div>
       </>}
 
-      {explanations && <>
-        <SectionTitle>🔬 SOURCES & MÉTHODOLOGIE</SectionTitle>
-        {Object.entries(explanations).map(([k,v]) => (
-          <div key={k} style={{ fontSize:11, color:'#64748B', marginBottom:3 }}>
-            <span style={{ color:'#475569', fontWeight:600 }}>{k.replace(/_/g,' ')}: </span>
-            {typeof v === 'object' ? Object.entries(v).map(([kk,vv]) => `${kk}: ${vv}`).join(' · ') : v}
-          </div>
-        ))}
-      </>}
+      {explanations && (() => {
+        // Show only financial-relevant explanations, translate keys
+        const friendlyKeys = {
+          rendement_locatif: 'Rendement locatif',
+          rentabilite_levier: 'Rentabilité avec financement',
+          fiscalite: 'Cadre fiscal',
+          duree_conseille: 'Durée recommandée',
+          probabilite_gain: 'Probabilité de gain',
+        };
+        const entries = Object.entries(explanations)
+          .filter(([k]) => friendlyKeys[k])
+          .map(([k,v]) => [friendlyKeys[k], v]);
+        if (!entries.length) return null;
+        return <>
+          <SectionTitle>📋 ANALYSE DÉTAILLÉE</SectionTitle>
+          {entries.map(([k,v]) => (
+            <div key={k} style={{ fontSize:11, color:'#64748B', marginBottom:4 }}>
+              <span style={{ color:'#475569', fontWeight:600 }}>{k} : </span>
+              {typeof v === 'object'
+                ? Object.entries(v).map(([kk,vv]) => `${kk} ${vv}`).join(' · ')
+                : v}
+            </div>
+          ))}
+        </>;
+      })()}
 
       <div style={{ marginTop:10, fontSize:10, color:'#475569', borderTop:'1px solid #1E293B', paddingTop:6 }}>
-        Sources: GlobalPropertyGuide Q2-2025 · BCT TMM · Code IRPP-IS 2024 · LF2025
+        Sources: GlobalPropertyGuide Q2-2025 · BCT · Code IRPP-IS 2024 · LF2025
         {data.elapsed_seconds != null && ` · ${data.elapsed_seconds}s`}
+      </div>
+    </div>
+  );
+}
+
+// ─── Verdict explanation card ─────────────────────────────────────────────
+function ExplanationCard({ data }) {
+  const { verdict, score, financials: f, risk, tax, primary_scenario } = data;
+  const lines = buildNormalExplanation(verdict, score, f, risk, tax, primary_scenario);
+  // Add extra detail for the explanation request
+  const irr = f?.irr_percent || 0;
+  const prob = (f?.prob_positive_npv || 0) * 100;
+  const holdYr = tax?.optimal_holding_years;
+  return (
+    <div style={S.msgBot}>
+      <strong style={{ color:'#E2E8F0', fontSize:14 }}>💬 Pourquoi ce verdict ?</strong>
+      <div style={{ marginTop:8 }}>
+        {lines.map((l,i) => (
+          <p key={i} style={{ color:'#CBD5E1', fontSize:13, lineHeight:1.7,
+            marginTop: i===0?4:6, marginBottom:0 }}>{l}</p>
+        ))}
+        {irr > 0 && (
+          <p style={{ color:'#CBD5E1', fontSize:13, lineHeight:1.7, marginTop:6, marginBottom:0 }}>
+            Le taux de rentabilité annuel calculé est de <strong style={{ color:'#93C5FD' }}>{irr.toFixed(1)}%</strong>.
+            {irr > 7.49
+              ? ` C'est supérieur au taux directeur de la Banque Centrale (7.49%), ce qui signifie que l'investissement crée de la valeur au-delà de ce que rapporte un placement sans risque.`
+              : ` C'est inférieur au taux directeur de la Banque Centrale (7.49%), ce qui signifie que le rendement ne compense pas complètement le coût de l'emprunt.`}
+          </p>
+        )}
+        {prob > 0 && (
+          <p style={{ color:'#CBD5E1', fontSize:13, lineHeight:1.7, marginTop:6, marginBottom:0 }}>
+            Sur des milliers de projections en faisant varier les loyers, l'appréciation et les taux,{' '}
+            <strong style={{ color: prob>60?'#4ADE80':prob>40?'#FBBF24':'#F87171' }}>
+              {prob.toFixed(0)}% des scénarios
+            </strong>{' '}
+            aboutissent à un gain net positif.
+          </p>
+        )}
+        {holdYr && (
+          <p style={{ color:'#CBD5E1', fontSize:13, lineHeight:1.7, marginTop:6, marginBottom:0 }}>
+            La durée de détention optimale calculée est de <strong style={{ color:'#FBBF24' }}>{holdYr} ans</strong>.
+            {holdYr >= 10
+              ? " Dépasser 10 ans permet de réduire la taxe sur la plus-value de 10% à 5%."
+              : " Revendre trop tôt augmente la facture fiscale sur la plus-value."}
+          </p>
+        )}
+      </div>
+      <div style={{ fontSize:10, color:'#475569', borderTop:'1px solid #1E293B', paddingTop:6, marginTop:10 }}>
+        Score global : {score}/100
       </div>
     </div>
   );
@@ -614,7 +757,7 @@ function DealSearchCard({ data }) {
         </div>
       ))}
       <div style={{ fontSize:10, color:'#475569', marginTop:6 }}>
-        Score valeur = écart au prix médian/m² du type · Données marché local
+        Score = écart au prix moyen du marché local · Plus le score est élevé, meilleure est l'affaire
       </div>
     </div>
   );
@@ -740,7 +883,7 @@ function WelcomeCard({ onOpenProp, onOpenProfile }) {
           <em style={{ color:'#94A3B8' }}>Essayez aussi:</em><br/>
           "Meilleures affaires à Sousse sous 300 000 TND"<br/>
           "Analyse le marché de Tunis"<br/>
-          Ou cliquez <strong style={{ color:'#93C5FD' }}>📊 IA</strong> sur n'importe quelle annonce.
+          Ou cliquez <strong style={{ color:'#93C5FD' }}>Ask AI</strong> sur n'importe quelle annonce.
         </div>
       </div>
     </div>
@@ -834,6 +977,19 @@ export default function KadastraAgent() {
       setMessages(prev => [...prev, { role:'user', content:text }]);
       setMessages(prev => [...prev, { role:'bot',  content:'guide' }]);
       return;
+    }
+
+    // Explanation request — find last result message and explain it locally (no API)
+    if (text && isExplainRequest(text)) {
+      const lastResult = [...messages].reverse().find(m => m.content === 'result');
+      if (lastResult) {
+        setInput('');
+        setMessages(prev => [...prev,
+          { role:'user', content: text },
+          { role:'bot',  content:'explanation', data: lastResult.data },
+        ]);
+        return;
+      }
     }
 
     setInput('');
@@ -941,6 +1097,9 @@ export default function KadastraAgent() {
         return expertMode
           ? <ExpertResultCard key={idx} data={msg.data}/>
           : <NormalResultCard key={idx} data={msg.data}/>;
+
+      case 'explanation':
+        return <ExplanationCard key={idx} data={msg.data}/>;
 
       case 'chat': {
         const d = msg.data;
@@ -1089,7 +1248,7 @@ export default function KadastraAgent() {
                   </div>
                 ))}
                 <div style={{ ...S.menuItem, borderBottom:'none', color:'#64748B', fontSize:11, cursor:'default' }}>
-                  📋 Ou cliquez <strong style={{ color:'#93C5FD' }}>📊 IA</strong> sur une annonce
+                  📋 Ou cliquez <strong style={{ color:'#93C5FD' }}>Ask AI</strong> sur une annonce
                 </div>
               </div>
             )}
