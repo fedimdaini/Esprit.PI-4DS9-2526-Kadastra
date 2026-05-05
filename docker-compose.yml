@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  kadastra-ml:
+    build: ./kadastra_ml_service
+    container_name: kadastra_ml
+    ports:
+      - "8001:8001"
+    environment:
+      - KADASTRA_MODEL_DIR=/app/kadastra_models
+      - KADASTRA_DATA_PATH=/app/data/df_clean_K.xlsx
+    volumes:
+      - ./kadastra_models:/app/kadastra_models:ro
+      - ./data:/app/data:ro
+
+  backend:
+    build: ./backend
+    container_name: immo_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - POSTGRES_DB=kadastra
+      - POSTGRES_USER=kadastra_user
+      - POSTGRES_PASSWORD=kadastra123
+      - POSTGRES_HOST=sami-scraping.duckdns.org
+      - POSTGRES_PORT=5432
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - ESPRIT_API_KEY=${ESPRIT_API_KEY}
+      - KADASTRA_ML_URL=http://kadastra-ml:8001
+    volumes:
+      - ./backend:/app
+      - contracts_pdf:/app/contracts_pdf
+    depends_on:
+      - kadastra-ml
+    command: >
+      sh -c "python -c 'import spacy; spacy.load(\"fr_core_news_lg\")' 2>/dev/null ||
+             python -m spacy download fr_core_news_lg &&
+             python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: immo_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000/api
+      - HOST=0.0.0.0
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    stdin_open: true
+    tty: true
+
+volumes:
+  contracts_pdf:

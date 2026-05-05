@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Lenovo/Downloads/**)",
+      "Bash(powershell -command \"Expand-Archive -Path 'kadastra_deploy.zip' -DestinationPath 'kadastra_deploy_extracted' -Force\")"
+    ]
+  }
+}
