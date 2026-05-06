@@ -54,9 +54,13 @@ export default function AuthPage({ onSuccess }) {
         background: '#fff', borderRadius: 16, padding: 40, width: '100%', maxWidth: 480,
         boxShadow: '0 20px 60px rgba(0,0,0,.3)',
       }}>
-        <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, textAlign: 'center' }}>
-          Immo<span style={{ color: '#667eea' }}>Tunisia</span>
-        </h1>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <img
+            src="/kadastra-logo.png"
+            alt="Kadastra"
+            style={{ height: 90, width: 'auto', objectFit: 'contain' }}
+          />
+        </div>
         <p style={{ textAlign: 'center', color: '#64748b', marginBottom: 32, fontSize: 14 }}>
           {mode === 'login' ? 'Connectez-vous à votre compte' : 'Créez votre compte'}
         </p>

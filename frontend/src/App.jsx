@@ -169,10 +169,12 @@ export default function App() {
       {/* Footer */}
       <footer style={{ background: '#fff', borderTop: '1px solid var(--border)', padding: '40px 0', marginTop: 80 }}>
         <div className="container" style={{ textAlign: 'center' }}>
-          <div className="premium-font" style={{ fontSize: 20, fontWeight: 900, marginBottom: 8 }}>
-            KADASTRA <span style={{ fontWeight: 400, opacity: 0.5 }}>Intelligence</span>
-          </div>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          <img
+            src="/kadastra-logo.png"
+            alt="Kadastra"
+            style={{ height: 64, width: 'auto', objectFit: 'contain', marginBottom: 10 }}
+          />
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 0 }}>
             © {new Date().getFullYear()} Plateforme immobilière avancée. Tous droits réservés.
           </p>
         </div>

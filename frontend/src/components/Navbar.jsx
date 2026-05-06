@@ -11,20 +11,12 @@ export default function Navbar({ onSearch, view, setView, user, logout }) {
       boxShadow: 'var(--shadow-sm)'
     }}>
       {/* Left: Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 200 }}>
-        <div style={{
-          width: 42, height: 42, borderRadius: '12px',
-          background: 'var(--primary)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 8px 16px -4px rgba(15, 23, 42, 0.4)'
-        }}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
-        </div>
-        <span className="premium-font" style={{ fontSize: 24, fontWeight: 900, letterSpacing: '-1px' }}>
-          KADASTRA
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', minWidth: 200 }}>
+        <img
+          src="/kadastra-logo.png"
+          alt="Kadastra"
+          style={{ height: 52, width: 'auto', objectFit: 'contain' }}
+        />
       </div>
 
       {/* Center: Search */}

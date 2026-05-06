@@ -20,6 +20,7 @@
  *   anything with an attached property, or descriptive NL text
  */
 import React, { useState, useRef, useEffect } from 'react';
+import ListingModal from './ListingModal';
 
 const API_BASE = process.env.REACT_APP_KADASTRA_API || 'http://localhost:8001';
 
@@ -99,6 +100,27 @@ function listingToProperty(l) {
     jardin: l.jardin?1:0, piscine: l.piscine?1:0,
   };
 }
+/** Map a deal row (from /api/chat deal_search) to the shape expected by ListingModal */
+function dealToListing(d) {
+  return {
+    titre:        d.titre || '',
+    prix:         d.prix ? `${Number(d.prix).toLocaleString('fr-TN')} TND` : 'Prix à consulter',
+    price_numeric: d.prix || 0,
+    adresse:      d.adresse || '',
+    localisation: d.adresse || '',
+    description:  d.description || '',
+    surface:      d.surface > 0 ? String(d.surface) : 'N/A',
+    surface_numeric: d.surface || 0,
+    chambres:     d.chambres > 0 ? String(d.chambres) : 'N/A',
+    salles_de_bain: null,
+    type:         d.type || '',
+    type_bien:    d.type || '',
+    source:       d.source || 'kadastra',
+    lien:         d.lien || d.url || '#',
+    first_image:  d.first_image || null,
+  };
+}
+
 function propertyFormToPayload(f) {
   return {
     Type: f.Type, Adresse: f.Adresse || 'Tunis',
@@ -702,11 +724,80 @@ function ExplanationCard({ data }) {
   );
 }
 
+// ─── Comparative bar chart for deals ──────────────────────────────────────
+function CompareDealsChart({ deals }) {
+  if (!deals || deals.length === 0) return null;
+  const colors   = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899'];
+  const maxPrix  = Math.max(...deals.map(d => d.prix  || 0), 1);
+  const maxPm2   = Math.max(...deals.map(d => d.prix_m2 || 0), 1);
+  const maxScore = Math.max(...deals.map(d => Math.abs(d.value_score || 0)), 1);
+
+  const Bar = ({ pct, color }) => (
+    <div style={{ height:5, background:'#1E293B', borderRadius:3, flex:1 }}>
+      <div style={{ height:'100%', borderRadius:3, width:`${Math.max(pct,2)}%`, background:color, transition:'width 0.4s' }}/>
+    </div>
+  );
+  const Row = ({ label, right, pct, color }) => (
+    <div style={{ marginBottom:5 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}>
+        <span style={{ fontSize:10, color:'#94A3B8', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</span>
+        <span style={{ fontSize:10, color:'#E2E8F0', fontWeight:600, flexShrink:0, marginLeft:4 }}>{right}</span>
+      </div>
+      <Bar pct={pct} color={color}/>
+    </div>
+  );
+
+  return (
+    <div style={{ background:'#0F172A', borderRadius:10, padding:'12px 14px', marginTop:8 }}>
+      <div style={{ fontSize:10, color:'#64748B', fontWeight:700, marginBottom:10, letterSpacing:'0.06em' }}>COMPARATIF DES OFFRES</div>
+
+      <div style={{ fontSize:10, color:'#94A3B8', marginBottom:6, fontWeight:600 }}>PRIX (TND)</div>
+      {deals.map((d,i) => <Row key={i}
+        label={`${i+1}. ${d.titre || d.adresse}`}
+        right={(d.prix||0).toLocaleString('fr-TN')}
+        pct={((d.prix||0)/maxPrix)*100}
+        color={colors[i%colors.length]}/>)}
+
+      {deals.some(d => d.prix_m2 > 0) && <>
+        <div style={{ fontSize:10, color:'#94A3B8', marginBottom:6, marginTop:12, fontWeight:600 }}>PRIX/m² (TND)</div>
+        {deals.filter(d => d.prix_m2 > 0).map((d,i) => <Row key={i}
+          label={`${i+1}. ${d.titre || d.adresse}`}
+          right={(d.prix_m2||0).toLocaleString('fr-TN')}
+          pct={((d.prix_m2||0)/maxPm2)*100}
+          color={colors[i%colors.length]}/>)}
+      </>}
+
+      <div style={{ fontSize:10, color:'#94A3B8', marginBottom:6, marginTop:12, fontWeight:600 }}>SCORE D'OPPORTUNITÉ (%)</div>
+      {deals.map((d,i) => (
+        <div key={i} style={{ marginBottom:5 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}>
+            <span style={{ fontSize:10, color:'#94A3B8', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{i+1}. {d.titre || d.adresse}</span>
+            <span style={{ fontSize:10, fontWeight:700, color: d.value_score>0?'#4ADE80':'#F87171', flexShrink:0, marginLeft:4 }}>
+              {d.value_score>0?'+':''}{d.value_score}%
+            </span>
+          </div>
+          <div style={{ height:5, background:'#1E293B', borderRadius:3 }}>
+            <div style={{ height:'100%', borderRadius:3,
+              width:`${Math.max((Math.abs(d.value_score||0)/maxScore)*100,2)}%`,
+              background: d.value_score>0?'#4ADE80':'#F87171', transition:'width 0.4s' }}/>
+          </div>
+        </div>
+      ))}
+
+      <div style={{ fontSize:10, color:'#475569', marginTop:10, paddingTop:8, borderTop:'1px solid #1E293B' }}>
+        Cliquez sur une propriété pour l'analyser avec l'IA
+      </div>
+    </div>
+  );
+}
+
 // ─── Chat result cards ─────────────────────────────────────────────────────
-function DealSearchCard({ data }) {
+function DealSearchCard({ data, onSelectDeal }) {
   const { deals, total_found, filters, llm_comment } = data;
-  const loc = filters?.location || 'Tunisie';
+  const loc    = filters?.location || 'Tunisie';
   const budget = filters?.budget;
+  const [showChart,  setShowChart]  = useState(false);
+  const [hoveredIdx, setHoveredIdx] = useState(null);
 
   return (
     <div style={S.msgBot}>
@@ -725,7 +816,17 @@ function DealSearchCard({ data }) {
       {deals.length === 0 ? (
         <div style={{ color:'#94A3B8', fontSize:13 }}>Aucune annonce trouvée. Essayez d'élargir la zone ou le budget.</div>
       ) : deals.map((d,i) => (
-        <div key={i} style={{ background:'#0F172A', borderRadius:8, padding:'10px 12px', marginBottom:8, border:'1px solid #1E293B' }}>
+        <div key={i}
+          onClick={() => onSelectDeal && onSelectDeal(d)}
+          onMouseEnter={() => setHoveredIdx(i)}
+          onMouseLeave={() => setHoveredIdx(null)}
+          style={{
+            background: hoveredIdx===i ? '#1A2A40' : '#0F172A',
+            borderRadius:8, padding:'10px 12px', marginBottom:8,
+            border: hoveredIdx===i ? '1px solid #3B82F6' : '1px solid #1E293B',
+            cursor: onSelectDeal ? 'pointer' : 'default',
+            transition:'background 0.15s, border-color 0.15s',
+          }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4 }}>
             <div style={{ flex:1, marginRight:8 }}>
               <div style={{ color:'#E2E8F0', fontSize:12, fontWeight:700, lineHeight:1.4 }}>{d.titre}</div>
@@ -744,18 +845,38 @@ function DealSearchCard({ data }) {
             <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
               {d.surface > 0 && <span style={{ color:'#94A3B8', fontSize:10 }}>📐 {d.surface} m²</span>}
               {d.chambres > 0 && <span style={{ color:'#94A3B8', fontSize:10 }}>🛏 {d.chambres}</span>}
-              {d.features.slice(0,3).map(ft => (
+              {(d.features||[]).slice(0,3).map(ft => (
                 <span key={ft} style={{ background:'#1E293B', color:'#94A3B8', fontSize:10,
                   padding:'1px 5px', borderRadius:3 }}>{ft}</span>
               ))}
             </div>
-            <div style={{ fontSize:10, fontWeight:700,
-              color: d.value_score > 0 ? '#4ADE80' : '#F87171' }}>
-              Score: {d.value_score > 0 ? '+' : ''}{d.value_score}%
+            <div style={{ fontSize:10, fontWeight:700, color: d.value_score>0?'#4ADE80':'#F87171' }}>
+              Score: {d.value_score>0?'+':''}{d.value_score}%
             </div>
           </div>
+          {hoveredIdx===i && onSelectDeal && (
+            <div style={{ fontSize:10, color:'#3B82F6', marginTop:5, textAlign:'center', fontWeight:600 }}>
+              Cliquez pour voir les détails →
+            </div>
+          )}
         </div>
       ))}
+
+      {deals.length > 1 && (
+        <button
+          onClick={() => setShowChart(s => !s)}
+          style={{
+            width:'100%', padding:'8px', borderRadius:8, marginTop:4, marginBottom:4,
+            background: showChart?'#1E3A5F':'#1E293B',
+            border:`1px solid ${showChart?'#3B82F6':'#334155'}`,
+            color: showChart?'#93C5FD':'#94A3B8',
+            fontSize:11, fontWeight:700, cursor:'pointer', transition:'all 0.2s',
+          }}>
+          📊 {showChart ? 'Masquer le comparatif' : 'Comparer les offres'}
+        </button>
+      )}
+      {showChart && <CompareDealsChart deals={deals}/>}
+
       <div style={{ fontSize:10, color:'#475569', marginTop:6 }}>
         Score = écart au prix moyen du marché local · Plus le score est élevé, meilleure est l'affaire
       </div>
@@ -925,6 +1046,8 @@ export default function KadastraAgent() {
   const [showMenu,   setShowMenu]   = useState(false);
   const [activeForm, setActiveForm] = useState(null);  // 'property' | 'profile'
   const [expertMode, setExpertMode] = useState(false); // false = Normal, true = Expert
+
+  const [selectedDeal,     setSelectedDeal]     = useState(null);  // deal modal
 
   const [attachedListing,  setAttachedListing]  = useState(null);
   const [attachedProperty, setAttachedProperty] = useState(null);
@@ -1104,7 +1227,8 @@ export default function KadastraAgent() {
       case 'chat': {
         const d = msg.data;
         if (d.type === 'deal_search')
-          return <DealSearchCard key={idx} data={{ ...d.data, llm_comment: d.llm_comment }}/>;
+          return <DealSearchCard key={idx} data={{ ...d.data, llm_comment: d.llm_comment }}
+            onSelectDeal={(deal) => setSelectedDeal(dealToListing(deal))}/>;
         if (d.type === 'market_analysis')
           return <MarketAnalysisCard key={idx} data={{ ...d.data, llm_comment: d.llm_comment }}/>;
         if (d.type === 'portfolio_advice')
@@ -1155,12 +1279,20 @@ export default function KadastraAgent() {
 
   return (
     <>
+      {/* Deal detail modal — rendered as top-level sibling to avoid panel overflow clipping */}
+      {selectedDeal && (
+        <ListingModal listing={selectedDeal} onClose={() => setSelectedDeal(null)}/>
+      )}
+
       {/* Floating bubble */}
       <button style={S.bubble} onClick={() => setOpen(o => !o)}
         onMouseEnter={e=>e.currentTarget.style.transform='scale(1.1)'}
         onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}
         title="Kadastra AI Agent">
-        {open ? '✕' : '🏠'}
+        {open
+          ? <span style={{ fontSize: 22, lineHeight: 1 }}>✕</span>
+          : <img src="/kadastra-logo.png" alt="Kadastra" style={{ width: 36, height: 36, objectFit: 'contain', filter: 'brightness(0) invert(1)' }}/>
+        }
       </button>
 
       {open && (
@@ -1168,8 +1300,13 @@ export default function KadastraAgent() {
           {/* Header */}
           <div style={S.header}>
             <div>
-              <p style={{ color:'#E2E8F0', fontSize:15, fontWeight:700, margin:0 }}>🏠 Kadastra Agent</p>
-              <p style={{ color:'#94A3B8', fontSize:10, margin:0 }}>Analyse d'investissement immobilier TN</p>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <img src="/kadastra-logo.png" alt="Kadastra" style={{ height:30, width:'auto', objectFit:'contain', filter:'brightness(0) invert(1)' }}/>
+                <div>
+                  <p style={{ color:'#E2E8F0', fontSize:15, fontWeight:700, margin:0 }}>Kadastra Agent</p>
+                  <p style={{ color:'#94A3B8', fontSize:10, margin:0 }}>Analyse d'investissement immobilier TN</p>
+                </div>
+              </div>
             </div>
             {/* Mode toggle */}
             <div style={{ display:'flex', alignItems:'center', gap:7 }}>

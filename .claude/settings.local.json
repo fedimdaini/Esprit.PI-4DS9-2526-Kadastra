@@ -9,7 +9,9 @@
       "Bash(docker-compose restart *)",
       "Bash(timeout 15 curl -s http://localhost:8001/api/health)",
       "Bash(timeout 30 bash -c \"until curl -s http://localhost:8001/api/health | grep -q 'ok\\\\|loading'; do sleep 2; done; curl -s http://localhost:8001/api/health\")",
-      "Bash(curl -s http://localhost:8001/api/health)"
+      "Bash(curl -s http://localhost:8001/api/health)",
+      "Bash(xargs grep *)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Lenovo\\\\Downloads\\\\\" | Where-Object { $_.Name -match \"kada|logo|KA\" })"
     ]
   }
 }

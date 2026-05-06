@@ -1,6 +1,10 @@
 // src/components/ListingModal.jsx
 import React, { useEffect, useMemo } from 'react';
 
+function fireKadastraAttach(listing) {
+  window.dispatchEvent(new CustomEvent('kadastra-attach-listing', { detail: listing }));
+}
+
 export default function ListingModal({ listing, onClose }) {
   useEffect(() => {
     const handler = (e) => e.key === 'Escape' && onClose();
@@ -34,7 +38,7 @@ export default function ListingModal({ listing, onClose }) {
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 3000,
+        position: 'fixed', inset: 0, zIndex: 10000,
         background: 'rgba(15,23,42,0.8)', backdropFilter: 'blur(8px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: 40,
@@ -143,20 +147,35 @@ export default function ListingModal({ listing, onClose }) {
           </div>
 
           {/* CTA */}
-          {lien && lien !== '#' && (
-            <a href={lien} target="_blank" rel="noopener noreferrer" style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-              background: 'var(--primary)', color: '#fff', padding: '18px', borderRadius: '16px',
-              fontWeight: 800, fontSize: 16, textDecoration: 'none', boxShadow: '0 10px 20px -5px rgba(99, 102, 241, 0.4)',
-              transition: 'transform 0.2s'
-            }}
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button
+              onClick={() => { fireKadastraAttach(listing); onClose(); }}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                background: 'var(--accent, #f59e0b)', color: '#fff', padding: '18px', borderRadius: '16px',
+                fontWeight: 800, fontSize: 15, border: 'none', cursor: 'pointer',
+                boxShadow: '0 10px 20px -5px rgba(245,158,11,0.4)', transition: 'transform 0.2s'
+              }}
               onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
               onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
             >
-              Consulter l'annonce complète
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
-            </a>
-          )}
+              🤖 Analyser avec l'IA
+            </button>
+            {lien && lien !== '#' && (
+              <a href={lien} target="_blank" rel="noopener noreferrer" style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                background: 'var(--primary)', color: '#fff', padding: '18px', borderRadius: '16px',
+                fontWeight: 800, fontSize: 15, textDecoration: 'none', boxShadow: '0 10px 20px -5px rgba(99, 102, 241, 0.4)',
+                transition: 'transform 0.2s'
+              }}
+                onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+              >
+                Consulter l'annonce
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </div>

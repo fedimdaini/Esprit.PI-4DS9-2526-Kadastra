@@ -201,15 +201,14 @@ export default function ContractGenerator() {
       }}>
         <div style={{ maxWidth: 1400, margin: '0 auto', padding: '0 40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-            <div style={{
-              width: 56, height: 56, borderRadius: 16,
-              background: 'var(--primary)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 28, boxShadow: '0 8px 32px rgba(15, 23, 42, 0.4)',
-            }}>⚖️</div>
+            <img
+              src="/kadastra-logo.png"
+              alt="Kadastra"
+              style={{ height: 56, width: 'auto', objectFit: 'contain', filter: 'brightness(0) invert(1)' }}
+            />
             <div>
               <h1 className="premium-font" style={{ fontSize: 32, fontWeight: 900, color: '#fff', margin: 0, letterSpacing: '-1px' }}>
-                KADASTRA <span style={{ color: 'var(--accent)', fontWeight: 400 }}>Legal Intelligence</span>
+                <span style={{ color: 'var(--accent)', fontWeight: 400 }}>Legal Intelligence</span>
               </h1>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>
                 Génération & Évaluation de Contrats par IA · {user?.user_type}
