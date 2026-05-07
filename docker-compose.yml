@@ -3,6 +3,7 @@ version: '3.8'
 services:
   kadastra-ml:
     build: ./kadastra_ml_service
+    image: immo_auth-kadastra-ml:stable
     container_name: kadastra_ml
     ports:
       - "8001:8001"
@@ -16,6 +17,7 @@ services:
 
   backend:
     build: ./backend
+    image: immo_auth-backend:stable
     container_name: immo_backend
     ports:
       - "8000:8000"
@@ -35,13 +37,15 @@ services:
     depends_on:
       - kadastra-ml
     command: >
-      sh -c "python -c 'import spacy; spacy.load(\"fr_core_news_lg\")' 2>/dev/null ||
+      sh -c "pip install lightgbm --quiet 2>/dev/null;
+             python -c 'import spacy; spacy.load(\"fr_core_news_lg\")' 2>/dev/null ||
              python -m spacy download fr_core_news_lg &&
              python manage.py migrate &&
              python manage.py runserver 0.0.0.0:8000"
 
   frontend:
     build: ./frontend
+    image: immo_auth-frontend:stable
     container_name: immo_frontend
     ports:
       - "3000:3000"

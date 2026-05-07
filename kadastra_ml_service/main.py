@@ -65,6 +65,10 @@ class PropertyInput(BaseModel):
     chauffage: int = 0
     jardin: int = 0
     piscine: int = 0
+    # Cross-reference data from friend's LightGBM listing-level models (optional)
+    market_price_estimate: Optional[float] = None   # predicted fair market price (TND)
+    market_price_label:    Optional[str]   = None   # 'great'|'fair'|'high'|'very_high'
+    market_price_delta_pct: Optional[float] = None  # (listed - estimated) / estimated × 100
 
 class InvestmentProfile(BaseModel):
     budget: float = 300_000
@@ -196,6 +200,53 @@ def _deep_convert(obj):
     return obj
 
 
+def _cross_reference_market_price(prop: dict) -> list[str]:
+    """
+    If the listing was annotated by the Django-side LightGBM price analyser,
+    cross-reference its estimate with the listed price and add contextual
+    warnings so the chatbot can surface them in its verdict.
+    """
+    warnings: list[str] = []
+    estimate = prop.get("market_price_estimate")
+    label    = prop.get("market_price_label")
+    delta    = prop.get("market_price_delta_pct")
+
+    if not estimate or not label:
+        return warnings
+
+    label_fr = {
+        "great":     "Bonne affaire",
+        "fair":      "Prix du marché",
+        "high":      "Prix élevé",
+        "very_high": "Très surévalué",
+    }.get(label, label)
+
+    listed = float(prop.get("price_numeric", 0) or 0)
+    delta_str = f"{'+' if delta and delta > 0 else ''}{round(delta or 0)}%"
+
+    if label == "very_high":
+        warnings.append(
+            f"⚠️ Analyse comparative (modèles LightGBM) : ce bien est classé « {label_fr} » "
+            f"— prix listé {delta_str} au-dessus du prix estimé par le marché "
+            f"(~{round(estimate):,} TND). Tenez-en compte dans votre négociation."
+        )
+    elif label == "high":
+        warnings.append(
+            f"Analyse comparative : bien classé « {label_fr} » "
+            f"({delta_str} vs estimation marché ~{round(estimate):,} TND). "
+            f"Une négociation est recommandée."
+        )
+    elif label == "great":
+        warnings.append(
+            f"✅ Opportunité de marché confirmée : ce bien est classé « {label_fr} » "
+            f"({delta_str} vs estimation marché ~{round(estimate):,} TND). "
+            f"Le prix listé est inférieur à la valeur marché estimée."
+        )
+    # 'fair' → no warning needed, price is aligned
+
+    return warnings
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
@@ -224,6 +275,9 @@ async def analyze(req: AnalyzeRequest):
 
     # ── Sanity check ──
     warnings = extra_warnings + _run_validation(prop)
+
+    # ── Cross-reference with listing-level price analysis ────────────────
+    warnings += _cross_reference_market_price(prop)
 
     try:
         scenario = _generator.generate_investment_scenario(prop, profile)

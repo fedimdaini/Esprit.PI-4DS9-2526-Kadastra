@@ -15,11 +15,19 @@ function fireKadastraAttach(listing) {
   window.dispatchEvent(new CustomEvent('kadastra-attach-listing', { detail: listing }));
 }
 
+// Price-analysis pill config  (label → [bg, text, border])
+const PILL_STYLE = {
+  great:     { bg: '#d1fae5', color: '#065f46', border: '#6ee7b7' },
+  fair:      { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+  high:      { bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
+  very_high: { bg: '#fff1f2', color: '#be123c', border: '#fecdd3' },
+};
+
 export default function ListingCard({ listing, onClick }) {
   const {
     titre, prix, adresse, localisation, pieces, chambres, salles_de_bain, surface,
     source, first_image,
-    price_numeric, original_currency,
+    price_numeric, original_currency, price_analysis,
   } = listing;
 
   // Build the display price string — only real prices from the database
@@ -101,6 +109,21 @@ export default function ListingCard({ listing, onClick }) {
             <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.5px' }}>
               {displayPrice}
             </div>
+            {price_analysis && (() => {
+              const ps = PILL_STYLE[price_analysis.label] || PILL_STYLE.fair;
+              return (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: ps.bg, color: ps.color,
+                  border: `1px solid ${ps.border}`,
+                  borderRadius: 99, padding: '2px 10px',
+                  fontSize: 11, fontWeight: 700, marginTop: 6,
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: ps.color, flexShrink: 0 }}/>
+                  {price_analysis.label_fr}
+                </span>
+              );
+            })()}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button

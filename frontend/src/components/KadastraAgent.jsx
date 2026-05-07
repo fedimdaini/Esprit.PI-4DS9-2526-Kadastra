@@ -98,6 +98,10 @@ function listingToProperty(l) {
     meuble: l.meuble?1:0, balcon_terrasse: l.balcon_terrasse?1:0,
     climatisation: l.climatisation?1:0, chauffage: l.chauffage?1:0,
     jardin: l.jardin?1:0, piscine: l.piscine?1:0,
+    // Pass friend's price analysis so ML service can cross-reference
+    market_price_estimate: l.price_analysis?.predicted_price  || null,
+    market_price_label:    l.price_analysis?.label            || null,
+    market_price_delta_pct: l.price_analysis?.delta_pct       || null,
   };
 }
 /** Map a deal row (from /api/chat deal_search) to the shape expected by ListingModal */
@@ -1202,19 +1206,52 @@ export default function KadastraAgent() {
       case 'guide':
         return <GuideCard key={idx} onOpenProp={openProp} onOpenProfile={openProfile}/>;
 
-      case 'listing-attached': return (
-        <div key={idx} style={S.msgBot}>
-          <span style={{ color:'#93C5FD', fontWeight:700 }}>📎 Annonce attachée</span>
-          <div style={{ fontSize:12, color:'#94A3B8', marginTop:5 }}>
-            <strong style={{ color:'#E2E8F0' }}>{msg.data.titre || msg.data.Type || '—'}</strong>
-            {(msg.data.adresse||msg.data.Adresse) && <><br/>{msg.data.adresse||msg.data.Adresse}</>}
-            {msg.data.prix && <> · <strong style={{ color:'#3B82F6' }}>{msg.data.prix}</strong></>}
+      case 'listing-attached': {
+        const pa = msg.data.price_analysis;
+        const PA_CHIP = {
+          great:     { bg:'#064e3b', color:'#6ee7b7' },
+          fair:      { bg:'#1e3a8a', color:'#93c5fd' },
+          high:      { bg:'#7c2d12', color:'#fdba74' },
+          very_high: { bg:'#881337', color:'#fda4af' },
+        };
+        const chip = pa ? (PA_CHIP[pa.label] || PA_CHIP.fair) : null;
+        return (
+          <div key={idx} style={S.msgBot}>
+            <span style={{ color:'#93C5FD', fontWeight:700 }}>📎 Annonce attachée</span>
+            <div style={{ fontSize:12, color:'#94A3B8', marginTop:5 }}>
+              <strong style={{ color:'#E2E8F0' }}>{msg.data.titre || msg.data.Type || '—'}</strong>
+              {(msg.data.adresse||msg.data.Adresse) && <><br/>{msg.data.adresse||msg.data.Adresse}</>}
+              {msg.data.prix && <> · <strong style={{ color:'#3B82F6' }}>{msg.data.prix}</strong></>}
+            </div>
+            {pa && (
+              <div style={{ marginTop:8, background:'#0F172A', borderRadius:8, padding:'8px 10px' }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
+                  <span style={{ fontSize:10, color:'#64748B', fontWeight:700 }}>ANALYSE DE PRIX · IA</span>
+                  <span style={{
+                    background: chip.bg, color: chip.color,
+                    borderRadius:99, padding:'2px 8px', fontSize:10, fontWeight:700,
+                  }}>{pa.label_fr}</span>
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:11 }}>
+                  <span style={{ color:'#94A3B8' }}>Prix estimé marché</span>
+                  <span style={{ color:'#E2E8F0', fontWeight:700 }}>
+                    ~{pa.predicted_price.toLocaleString('fr-TN')} TND
+                  </span>
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, marginTop:2 }}>
+                  <span style={{ color:'#94A3B8' }}>Écart</span>
+                  <span style={{ fontWeight:700, color: pa.delta_pct > 20 ? '#F87171' : pa.delta_pct < -10 ? '#4ADE80' : '#94A3B8' }}>
+                    {pa.delta_pct > 0 ? '+' : ''}{pa.delta_pct}%
+                  </span>
+                </div>
+              </div>
+            )}
+            <div style={{ fontSize:11, color:'#64748B', marginTop:6 }}>
+              Cliquez <strong style={{ color:'#3B82F6' }}>Analyser</strong>, ou précisez budget / durée avant.
+            </div>
           </div>
-          <div style={{ fontSize:11, color:'#64748B', marginTop:6 }}>
-            Cliquez <strong style={{ color:'#3B82F6' }}>Analyser</strong>, ou précisez budget / durée avant.
-          </div>
-        </div>
-      );
+        );
+      }
 
       case 'result':
         return expertMode

@@ -8,6 +8,7 @@ from django.db.models import Q, IntegerField
 from django.db.models.expressions import RawSQL
 from .models import Data
 from .serializers import DataSerializer
+from . import ml_pricer
 import requests
 
 EUR_TO_TND   = 3.38   # approximate BCT mid-rate 2025
@@ -102,6 +103,8 @@ def _enrich_price_fields(results):
         r['is_price_consult']  = is_consult
         r['is_ai_price']       = False
         r['surface_numeric']   = parse_numeric_text(r.get('surface') or '')
+        # ── Friend's LightGBM price analysis ─────────────────────────────
+        r['price_analysis']    = ml_pricer.analyze_price(r)
     return results
 
 
@@ -201,6 +204,7 @@ def listing_detail_view(request, pk):
         data['is_price_consult']  = is_consult
         data['is_ai_price']       = False
         data['surface_numeric']   = parse_numeric_text(data.get('surface') or '')
+        data['price_analysis']    = ml_pricer.analyze_price(data)
         return JsonResponse(data)
     except Data.DoesNotExist:
         return JsonResponse({'error': 'Annonce introuvable'}, status=404)

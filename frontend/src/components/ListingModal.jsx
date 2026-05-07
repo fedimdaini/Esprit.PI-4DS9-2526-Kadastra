@@ -24,7 +24,7 @@ export default function ListingModal({ listing, onClose }) {
   }, [listing?.description]);
 
   if (!listing) return null;
-  const { titre, lien, prix, adresse, localisation, description, chambres, salles_de_bain, surface, type: type_bien, source, first_image } = listing;
+  const { titre, lien, prix, adresse, localisation, description, chambres, salles_de_bain, surface, type: type_bien, source, first_image, price_analysis } = listing;
 
   const fields = [
     { icon: '📍', label: 'Localisation', value: adresse || localisation },
@@ -131,6 +131,58 @@ export default function ListingModal({ listing, onClose }) {
               {description}
             </p>
           </div>
+
+          {/* ── Price Analysis Block ─────────────────────────────────── */}
+          {price_analysis && (() => {
+            const PA_COLORS = {
+              great:     { bg: '#f0fdf4', border: '#86efac', dot: '#16a34a', text: '#14532d' },
+              fair:      { bg: '#eff6ff', border: '#93c5fd', dot: '#2563eb', text: '#1e3a8a' },
+              high:      { bg: '#fff7ed', border: '#fdba74', dot: '#ea580c', text: '#7c2d12' },
+              very_high: { bg: '#fff1f2', border: '#fda4af', dot: '#e11d48', text: '#881337' },
+            };
+            const c   = PA_COLORS[price_analysis.label] || PA_COLORS.fair;
+            const abs = Math.abs(price_analysis.delta_pct);
+            const dir = price_analysis.delta_pct > 0 ? 'au-dessus' : 'en dessous';
+            const intensity =
+              abs > 100 ? '(estimation modérée)' :
+              abs > 50  ? '(surévaluation importante)' :
+              abs > 20  ? '(écart notable)' : '';
+            return (
+              <div style={{ marginBottom: 32 }}>
+                <div style={{
+                  background: c.bg, border: `1px solid ${c.border}`,
+                  borderRadius: 16, padding: '18px 22px',
+                }}>
+                  {/* Header */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: c.dot, flexShrink: 0 }}/>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: c.text }}>
+                      Analyse de prix · IA Kadastra
+                    </span>
+                  </div>
+                  {/* Delta line */}
+                  <div style={{ fontSize: 13, color: c.text, marginBottom: 6 }}>
+                    Prix {abs > 0 ? `${abs > 0 && price_analysis.delta_pct > 0 ? 'au-dessus' : 'en dessous'} du marché` : 'dans la moyenne'}{' '}
+                    {abs > 0 && (
+                      <strong>({price_analysis.delta_pct > 0 ? '+' : ''}{price_analysis.delta_pct}%)</strong>
+                    )}{' '}
+                    <span style={{ opacity: 0.7 }}>{intensity}</span>
+                  </div>
+                  {/* Predicted price */}
+                  <div style={{ fontSize: 14, fontWeight: 700, color: c.text, marginBottom: 10 }}>
+                    Prix estimé par le marché :&nbsp;
+                    <span style={{ fontSize: 16 }}>~{price_analysis.predicted_price.toLocaleString('fr-TN')} TND</span>
+                  </div>
+                  {/* Divider */}
+                  <div style={{ borderTop: `1px solid ${c.border}`, marginBottom: 10 }}/>
+                  {/* Message */}
+                  <p style={{ fontSize: 12, color: c.text, opacity: 0.85, fontStyle: 'italic', margin: 0, lineHeight: 1.6 }}>
+                    {price_analysis.message}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Security Map */}
           <div style={{ marginBottom: 40 }}>
