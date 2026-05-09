@@ -6,5 +6,6 @@ urlpatterns = [
     path('api/auth/', include('accounts.urls')),
     path('api/contracts/', include('contracts.urls')),
     path('api/kadastra/', include('kadastra_proxy.urls')),
+    path('api/predict/', include('predict.urls')),
     path('api/', include('listings.urls')),
 ]

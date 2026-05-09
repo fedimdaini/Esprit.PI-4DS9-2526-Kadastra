@@ -78,21 +78,23 @@ def generate_contract_view(request):
 
     # Contract type
     contract_type = data.get('contract_type') or detect_contract_type(listing)
+
+    # Party info — trust the frontend's role-based assignment
     vendeur_info = data.get('vendeur_info')
-    
-    # Get logged-in user info for acheteur
-    acheteur_info = None
+    acheteur_info = data.get('acheteur_info')
+
+    # Fallback: if no acheteur_info AND no vendeur_info provided, use logged-in user
     if request.user.is_authenticated:
-        # Check for explicitly provided info first, then fall back to user profile
-        acheteur_data = data.get('acheteur_info')
-        if acheteur_data:
-            acheteur_info = acheteur_data
-        else:
-            acheteur_info = {
-                'nom': f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username,
-                'cin': getattr(request.user, 'cin', ''),
-                'adresse': getattr(request.user, 'address', ''),
-            }
+        role_ctx = data.get('role_context', 'acheteur')
+        user_profile = {
+            'nom': f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username,
+            'cin': getattr(request.user, 'cin', ''),
+            'adresse': getattr(request.user, 'address', ''),
+        }
+        if role_ctx == 'vendeur' and (not vendeur_info or not vendeur_info.get('nom')):
+            vendeur_info = user_profile
+        elif role_ctx == 'acheteur' and (not acheteur_info or not acheteur_info.get('nom')):
+            acheteur_info = user_profile
 
     # Build NLP-enriched prompt
     user_role = get_nlp_role(

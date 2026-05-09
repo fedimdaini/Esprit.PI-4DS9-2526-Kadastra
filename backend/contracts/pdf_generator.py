@@ -24,13 +24,22 @@ def clean_text_for_pdf(text):
 
 
 def safe_text(text, max_len=95):
-    """Word-wrap long lines for PDF."""
+    """Word-wrap long lines for PDF, respecting word boundaries."""
     result = []
     for line in text.split('\n'):
-        while len(line) > max_len:
-            result.append(line[:max_len])
-            line = line[max_len:]
-        result.append(line)
+        if len(line) <= max_len:
+            result.append(line)
+            continue
+        words = line.split(' ')
+        current_line = ''
+        for word in words:
+            if current_line and len(current_line) + 1 + len(word) > max_len:
+                result.append(current_line)
+                current_line = word
+            else:
+                current_line = (current_line + ' ' + word) if current_line else word
+        if current_line:
+            result.append(current_line)
     return '\n'.join(result)
 
 

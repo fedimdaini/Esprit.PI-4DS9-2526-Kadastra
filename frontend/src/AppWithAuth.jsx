@@ -12,6 +12,14 @@ function MainRouter() {
   const { user, logout, loading } = useAuth();
   const [view, setView] = useState('listings');  // 'listings', 'dashboard', 'contracts', 'map'
 
+  // ── Hooks must be declared before any conditional returns ──────────────────
+  // Listen for navigation events from ListingModal "Générer un Contrat" button
+  React.useEffect(() => {
+    const handleGotoContract = () => setView('contracts');
+    window.addEventListener('kadastra-goto-contract', handleGotoContract);
+    return () => window.removeEventListener('kadastra-goto-contract', handleGotoContract);
+  }, []);
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a' }}>

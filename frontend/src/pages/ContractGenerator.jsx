@@ -75,6 +75,20 @@ export default function ContractGenerator() {
     return () => synthRef.current.cancel();
   }, []);
 
+  // Pick up a listing pre-selected from the ListingModal "Générer un Contrat" button
+  useEffect(() => {
+    const targetListingStr = sessionStorage.getItem('kadastra_target_listing');
+    if (targetListingStr) {
+      try {
+        const targetListing = JSON.parse(targetListingStr);
+        selectListing(targetListing);
+        sessionStorage.removeItem('kadastra_target_listing');
+      } catch (e) {
+        console.error('Failed to parse target listing', e);
+      }
+    }
+  }, []);
+
   async function runEvaluation() {
     if (!result) return;
     setEvaluating(true);
@@ -118,8 +132,12 @@ export default function ContractGenerator() {
     const body = {
       listing_id: parseInt(listingId),
       role_context: roleContext,
-      vendeur_info: { nom: vendeurNom, cin: vendeurCin, adresse: vendeurAdresse },
-      acheteur_info: { nom: acheteurNom, cin: acheteurCin, adresse: acheteurAdresse }
+      vendeur_info: roleContext === 'vendeur'
+        ? { nom: acheteurNom, cin: acheteurCin, adresse: acheteurAdresse }
+        : { nom: vendeurNom, cin: vendeurCin, adresse: vendeurAdresse },
+      acheteur_info: roleContext === 'vendeur'
+        ? { nom: vendeurNom, cin: vendeurCin, adresse: vendeurAdresse }
+        : { nom: acheteurNom, cin: acheteurCin, adresse: acheteurAdresse },
     };
     if (contractType !== 'auto') body.contract_type = contractType;
     try {
@@ -190,6 +208,62 @@ export default function ContractGenerator() {
   }
 
   const ccrColor = (ccr) => ccr >= 80 ? '#16a34a' : (ccr >= 60 ? '#ca8a04' : '#dc2626');
+
+  // ── Professional Contract Renderer ──────────────────────────────────────────
+  function renderContract(rawText) {
+    if (!rawText) return null;
+    let text = rawText.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+    // Join single newlines (LLM wrapping artifacts) into spaces
+    text = text.replace(/(?<!\n)\n(?!\n)/g, ' ').replace(/ {2,}/g, ' ');
+    const paragraphs = text.split('\n\n').map(p => p.trim()).filter(Boolean);
+
+    const renderInline = (str) => {
+      const parts = str.split(/\*\*(.*?)\*\*/g);
+      return parts.map((part, j) =>
+        j % 2 === 1 ? React.createElement('strong', { key: j }, part) : part
+      );
+    };
+
+    return paragraphs.map((para, i) => {
+      const plain = para.replace(/\*\*/g, '').trim();
+      const isArticle = /^ARTICLE\s+\d+/i.test(plain);
+      const isAllCaps = plain === plain.toUpperCase() && plain.length > 5 && plain.length < 150;
+      const isMainTitle = isAllCaps && /^(PROMESSE|CONTRAT|ACTE)/i.test(plain);
+      const isFait = /^Fait [aà]/i.test(plain);
+      const isSig = /^(SIGNATURES?$|LE VENDEUR|L['']ACQU|LE BAILLEUR|LE PRENEUR|LE LOCATAIRE)/i.test(plain);
+
+      if (isMainTitle) return (
+        <div key={i} style={{ textAlign:'center', fontSize:18, fontWeight:800, letterSpacing:'2px', color:'#1a1a3e', margin:'28px 0 20px', padding:'14px 0', borderTop:'2px solid #1a1a3e', borderBottom:'2px solid #1a1a3e', textTransform:'uppercase' }}>
+          {renderInline(para)}
+        </div>
+      );
+      if (isArticle) return (
+        <div key={i} style={{ fontSize:14, fontWeight:800, color:'#1a1a3e', margin:'24px 0 6px', padding:'6px 0 4px', borderBottom:'1px solid #ccc', textTransform:'uppercase', letterSpacing:'0.5px' }}>
+          {renderInline(para)}
+        </div>
+      );
+      if (isAllCaps && !isArticle) return (
+        <div key={i} style={{ textAlign:'center', fontSize:13, fontWeight:700, color:'#1a1a3e', margin:'18px 0 10px', letterSpacing:'1px' }}>
+          {renderInline(para)}
+        </div>
+      );
+      if (isSig) return (
+        <div key={i} style={{ textAlign:'center', fontSize:14, fontWeight:700, color:'#1a1a3e', margin:'36px 0 8px' }}>
+          {renderInline(para)}
+        </div>
+      );
+      if (isFait) return (
+        <p key={i} style={{ margin:'28px 0 14px', fontSize:14, fontStyle:'italic', color:'#333', textAlign:'center' }}>
+          {renderInline(para)}
+        </p>
+      );
+      return (
+        <p key={i} style={{ margin:'0 0 10px', fontSize:14, lineHeight:'1.9', color:'#2c2c2c', textAlign:'justify' }}>
+          {renderInline(para)}
+        </p>
+      );
+    });
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#0f172a', paddingBottom: 60 }}>
@@ -296,6 +370,12 @@ export default function ContractGenerator() {
                   <button onClick={() => setRoleContext('vendeur')} style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: roleContext === 'vendeur' ? 'var(--primary)' : 'transparent', color: '#fff', fontWeight: 800 }}>VENDEUR</button>
                 </div>
               </div>
+              {error && (
+                <div style={{ padding: 12, marginBottom: 20, background: 'rgba(220, 38, 38, 0.1)', border: '1px solid #dc2626', borderRadius: 12, color: '#f87171', fontSize: 13, fontWeight: 700 }}>
+                  ⚠️ {error}
+                </div>
+              )}
+
               <button onClick={handleGenerate} disabled={generating || !listingId} style={{ ...btnPrimaryStyle, width: '100%', padding: 16 }}>
                 {generating ? 'ANALYSE NLP...' : '⚖️ GÉNÉRER LE CONTRAT'}
               </button>
@@ -325,19 +405,36 @@ export default function ContractGenerator() {
                 )}
 
                 <div style={{
-                  background: '#fff', padding: '80px 70px', minHeight: 1000, whiteSpace: 'pre-wrap', fontSize: '15px', lineHeight: '1.8',
-                  color: '#1e293b', fontFamily: "'Times New Roman', serif", boxShadow: '0 30px 60px -12px rgba(0,0,0,0.5)', position: 'relative', border: '1px solid #d1d5db',
+                  background: '#fff', minHeight: 1000, fontSize: '14px', lineHeight: '1.8',
+                  color: '#1e293b', fontFamily: "'Times New Roman', 'Georgia', serif",
+                  boxShadow: '0 30px 60px -12px rgba(0,0,0,0.5)', position: 'relative',
+                  border: '1px solid #bbb', overflow: 'hidden',
                 }}>
                   {isReading && (
-                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: 'rgba(129, 140, 248, 0.2)' }}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: 'rgba(129,140,248,0.2)', zIndex: 5 }}>
                       <div style={{ height: '100%', width: '100%', background: 'var(--primary)', animation: 'reading 2s linear infinite' }} />
                     </div>
                   )}
-                  <div style={{ position: 'absolute', top: 40, right: 40, padding: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
-                    <div style={{ fontSize: 9, color: '#94a3b8', textTransform: 'uppercase' }}>Secure ID</div>
-                    <div style={{ fontSize: 11, fontWeight: 700 }}>#KAD-{result.listing_id}</div>
+                  {/* Letterhead */}
+                  <div style={{ background: 'linear-gradient(135deg, #1a1a3e 0%, #2a2a5e 100%)', padding: '28px 70px', textAlign: 'center', borderBottom: '3px solid #d4af37' }}>
+                    <div style={{ fontSize: 26, fontWeight: 900, color: '#fff', letterSpacing: '4px' }}>KADASTRA & ASSOCIÉS</div>
+                    <div style={{ fontSize: 11, color: '#d4af37', letterSpacing: '3px', textTransform: 'uppercase', marginTop: 2 }}>Cabinet de Conseil Juridique Immobilier</div>
+                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>Tunis, Tunisie · contact@kadastra.tn</div>
                   </div>
-                  <div style={{ position: 'relative', zIndex: 1 }}>{result.contract}</div>
+                  {/* Ref badge */}
+                  <div style={{ position: 'absolute', top: 100, right: 40, padding: '6px 14px', border: '1px solid #e2e8f0', textAlign: 'center', background: '#fafafa', zIndex: 2 }}>
+                    <div style={{ fontSize: 8, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px' }}>Réf.</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#1a1a3e' }}>#KAD-{result.listing_id}</div>
+                  </div>
+                  {/* Contract body */}
+                  <div style={{ padding: '36px 70px 50px', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+                    {renderContract(result.contract)}
+                  </div>
+                  {/* Footer */}
+                  <div style={{ borderTop: '2px solid #1a1a3e', padding: '12px 70px', display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#94a3b8', background: '#fafafa' }}>
+                    <span>Document généré par IA — Certification KADASTRA NLP 7/7</span>
+                    <span>Réf: KAD-{result.listing_id} · {new Date().toLocaleDateString('fr-FR')}</span>
+                  </div>
                 </div>
 
                 <div className="card" style={{ padding: 28, background: 'rgba(30,41,59,0.7)' }}>

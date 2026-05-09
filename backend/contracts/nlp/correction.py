@@ -14,14 +14,36 @@ def correct_text_enhanced(text):
     return result
 
 
+def clean_line_breaks(text):
+    """
+    Join words that were broken across lines by LLM fixed-width wrapping.
+    Preserves paragraph breaks (double newlines).
+    """
+    if not text:
+        return text
+    text = text.replace('\r\n', '\n')
+    # Normalize 3+ newlines to 2
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # Replace single newlines (not paragraph breaks) with a space
+    text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+    # Clean up multiple spaces
+    text = re.sub(r' {2,}', ' ', text)
+    return text
+
+
 def post_correct_contract(contract_text):
     """
-    Post-process a generated contract with grammar corrections.
-    Handles long texts by processing paragraph by paragraph.
+    Post-process a generated contract:
+    1. Fix broken words from LLM line wrapping
+    2. Apply grammar corrections paragraph by paragraph.
     """
     if not contract_text:
         return contract_text
 
+    # Step 1: Fix broken line wrapping
+    contract_text = clean_line_breaks(contract_text)
+
+    # Step 2: Grammar corrections per paragraph
     paragraphs = contract_text.split('\n')
     corrected_parts = []
     for para in paragraphs:

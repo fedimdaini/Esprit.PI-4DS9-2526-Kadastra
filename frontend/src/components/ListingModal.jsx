@@ -198,8 +198,25 @@ export default function ListingModal({ listing, onClose }) {
             </div>
           </div>
 
-          {/* CTA */}
-          <div style={{ display: 'flex', gap: 12 }}>
+          {/* CTAs */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => {
+                sessionStorage.setItem('kadastra_target_listing', JSON.stringify(listing));
+                window.dispatchEvent(new CustomEvent('kadastra-goto-contract'));
+                onClose();
+              }}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                background: '#f8fafc', color: 'var(--text)', padding: '18px', borderRadius: '16px',
+                fontWeight: 800, fontSize: 15, border: '2px solid var(--border)', cursor: 'pointer',
+                transition: 'all 0.2s', boxShadow: 'var(--shadow-sm)'
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = '#fff'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#f8fafc'; }}
+            >
+              ⚖️ Générer un Contrat
+            </button>
             <button
               onClick={() => { fireKadastraAttach(listing); onClose(); }}
               style={{

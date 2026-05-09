@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'listings',
     'contracts',
     'kadastra_proxy',
+    'predict',
 ]
 
 MIDDLEWARE = [
