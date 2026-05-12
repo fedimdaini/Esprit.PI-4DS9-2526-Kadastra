@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Lenovo/Downloads/**)",
+      "Bash(powershell -command \"Expand-Archive -Path 'kadastra_deploy.zip' -DestinationPath 'kadastra_deploy_extracted' -Force\")",
+      "Read(//mnt/c/Users/Lenovo/Downloads/immo_auth/immo_auth/kadastra_ml_service/**)",
+      "Read(//mnt/c/Users/Lenovo/Downloads/immo_auth/immo_auth/**)",
+      "Bash(docker-compose ps *)",
+      "Bash(docker-compose restart *)",
+      "Bash(timeout 15 curl -s http://localhost:8001/api/health)",
+      "Bash(timeout 30 bash -c \"until curl -s http://localhost:8001/api/health | grep -q 'ok\\\\|loading'; do sleep 2; done; curl -s http://localhost:8001/api/health\")",
+      "Bash(curl -s http://localhost:8001/api/health)",
+      "Bash(xargs grep *)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Lenovo\\\\Downloads\\\\\" | Where-Object { $_.Name -match \"kada|logo|KA\" })"
+    ]
+  }
+}
