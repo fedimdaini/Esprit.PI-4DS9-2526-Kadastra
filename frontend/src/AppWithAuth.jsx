@@ -1,6 +1,7 @@
 // src/AppWithAuth.jsx - Version avec authentification + Contrats
 import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { LanguageProvider } from './i18n/LanguageContext';
 import AuthPage from './pages/Auth';
 import Dashboard from './pages/Dashboard';
 import ContractGenerator from './pages/ContractGenerator';
@@ -23,7 +24,7 @@ function MainRouter() {
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a' }}>
-        <div style={{ fontSize: 18, color: '#64748b' }}>Chargement...</div>
+        <div style={{ fontSize: 18, color: '#64748b' }}>Loading…</div>
       </div>
     );
   }
@@ -91,8 +92,10 @@ function MainRouter() {
 
 export default function AppWithAuth() {
   return (
-    <AuthProvider>
-      <MainRouter />
-    </AuthProvider>
+    <LanguageProvider>
+      <AuthProvider>
+        <MainRouter />
+      </AuthProvider>
+    </LanguageProvider>
   );
 }

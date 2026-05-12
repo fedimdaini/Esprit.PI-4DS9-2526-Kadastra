@@ -1,8 +1,18 @@
 // src/components/Navbar.jsx
 import React from 'react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export default function Navbar({ onSearch, view, setView, user, logout }) {
+  const { lang, toggleLanguage, t } = useLanguage();
   if (!user) return null;
+
+  const navItems = [
+    { id: 'listings',  label: t('nav.listings'),  icon: '🏠' },
+    { id: 'dashboard', label: t('nav.dashboard'), icon: '📊' },
+    { id: 'contracts', label: t('nav.contracts'), icon: '⚖️' },
+    { id: 'map',       label: t('nav.map'),       icon: '🗺️' },
+  ];
+
   return (
     <nav style={{
       background: '#fff', borderBottom: '1px solid var(--border)',
@@ -12,11 +22,8 @@ export default function Navbar({ onSearch, view, setView, user, logout }) {
     }}>
       {/* Left: Logo */}
       <div style={{ display: 'flex', alignItems: 'center', minWidth: 200 }}>
-        <img
-          src="/kadastra-logo.png"
-          alt="Kadastra"
-          style={{ height: 52, width: 'auto', objectFit: 'contain' }}
-        />
+        <img src="/kadastra-logo.png" alt="Kadastra"
+          style={{ height: 52, width: 'auto', objectFit: 'contain' }}/>
       </div>
 
       {/* Center: Search */}
@@ -29,57 +36,71 @@ export default function Navbar({ onSearch, view, setView, user, logout }) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.5">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
-          <input
-            type="text"
-            placeholder="Rechercher..."
+          <input type="text" placeholder={t('nav.search')}
             onChange={(e) => onSearch(e.target.value)}
-            style={{
-              flex: 1, border: 'none', background: 'transparent',
-              fontSize: 14, fontWeight: 500, padding: '10px 0', outline: 'none'
-            }}
-          />
+            style={{ flex:1, border:'none', background:'transparent',
+              fontSize:14, fontWeight:500, padding:'10px 0', outline:'none' }}/>
         </div>
       </div>
 
-      {/* Right: Nav & User */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 24, minWidth: 400, justifyContent: 'flex-end' }}>
-        <div style={{ display: 'flex', background: 'var(--surface-alt)', padding: 4, borderRadius: 12 }}>
-          {[
-            { id: 'listings', label: 'Annonces', icon: '🏠' },
-            { id: 'dashboard', label: 'Stats', icon: '📊' },
-            { id: 'contracts', label: 'Contrats', icon: '⚖️' },
-            { id: 'map', label: 'Carte', icon: '🗺️' }
-          ].map(item => (
+      {/* Right: Nav, Lang toggle & User */}
+      <div style={{ display:'flex', alignItems:'center', gap:16, minWidth:420, justifyContent:'flex-end' }}>
+
+        {/* Nav tabs */}
+        <div style={{ display:'flex', background:'var(--surface-alt)', padding:4, borderRadius:12 }}>
+          {navItems.map(item => (
             <button key={item.id} onClick={() => setView(item.id)} style={{
-              padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 700,
+              padding:'8px 16px', borderRadius:10, fontSize:13, fontWeight:700,
               background: view === item.id ? 'var(--accent)' : 'transparent',
               color: view === item.id ? '#000' : 'var(--text-muted)',
-              transition: 'all 0.2s',
+              transition:'all 0.2s', border:'none', cursor:'pointer',
             }}>
               {item.label}
             </button>
           ))}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ textAlign: 'right', lineHeight: 1.2 }}>
-            <div style={{ fontSize: 13, fontWeight: 800 }}>{user.first_name || user.username}</div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{user.user_type}</div>
+        {/* Language toggle */}
+        <button onClick={toggleLanguage} title={lang === 'fr' ? 'Switch to English' : 'Passer en français'}
+          style={{
+            display:'flex', alignItems:'center', gap:5,
+            padding:'6px 12px', borderRadius:20,
+            background: lang === 'fr' ? '#EFF6FF' : '#F0FDF4',
+            border:`1.5px solid ${lang === 'fr' ? '#BFDBFE' : '#BBF7D0'}`,
+            color: lang === 'fr' ? '#1D4ED8' : '#15803D',
+            fontSize:12, fontWeight:800, cursor:'pointer',
+            transition:'all 0.2s', letterSpacing:'0.05em',
+          }}>
+          {lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN'}
+        </button>
+
+        {/* User info + logout */}
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{ textAlign:'right', lineHeight:1.2 }}>
+            <div style={{ fontSize:13, fontWeight:800 }}>{user.first_name || user.username}</div>
+            <div style={{ fontSize:10, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.5px' }}>
+              {user.user_type}
+            </div>
           </div>
           <div style={{
-            width: 38, height: 38, borderRadius: '12px',
-            background: 'var(--primary)', color: '#fff',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 15, fontWeight: 800, border: '2px solid var(--accent)'
+            width:38, height:38, borderRadius:'12px',
+            background:'var(--primary)', color:'#fff',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            fontSize:15, fontWeight:800, border:'2px solid var(--accent)'
           }}>
             {(user.first_name || user.username || 'U')[0].toUpperCase()}
           </div>
-          <button onClick={logout} style={{
-            marginLeft: 8, padding: '8px', borderRadius: 10,
-            background: '#fff1f2', color: '#e11d48',
-            border: '1px solid #fecaca'
+          <button onClick={logout} title={t('nav.logout')} style={{
+            marginLeft:4, padding:'8px', borderRadius:10,
+            background:'#fff1f2', color:'#e11d48',
+            border:'1px solid #fecaca', cursor:'pointer',
           }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
           </button>
         </div>
       </div>

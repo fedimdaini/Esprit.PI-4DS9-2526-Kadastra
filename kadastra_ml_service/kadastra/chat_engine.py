@@ -309,24 +309,40 @@ def portfolio_advice(df: pd.DataFrame, params: dict, portfolio_advisor) -> dict:
     }
 
 
-# ── Groq LLM helper ──────────────────────────────────────────────────────
-def _try_groq(prompt: str, groq_key: str) -> Optional[str]:
+# ── Esprit LLM helper (LLaMA-3.1-70B) ───────────────────────────────────
+import os as _os
+
+_ESPRIT_KEY   = _os.environ.get("ESPRIT_API_KEY", "sk-e8d1f52f7bce4a349af80b4080b24205")
+_ESPRIT_BASE  = "https://tokenfactory.esprit.tn/api"
+_ESPRIT_MODEL = "hosted_vllm/Llama-3.1-70B-Instruct"
+
+
+def _try_llm(prompt: str) -> Optional[str]:
+    """Call Esprit-hosted LLaMA-3.1-70B. Falls back silently on any error."""
     try:
-        from groq import Groq
-        client = Groq(api_key=groq_key)
+        from openai import OpenAI
+        client = OpenAI(api_key=_ESPRIT_KEY, base_url=_ESPRIT_BASE)
         resp = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model=_ESPRIT_MODEL,
             messages=[
                 {"role": "system", "content": (
-                    "Tu es Kadastra, un expert en immobilier tunisien. "
-                    "Réponds toujours en français, de façon concise et professionnelle. "
-                    "Maximum 200 mots. Utilise des données chiffrées quand disponibles."
+                    "Tu es Kadastra, un expert en immobilier tunisien reconnu. "
+                    "Réponds TOUJOURS en français, de façon concise et professionnelle. "
+                    "Maximum 200 mots. Utilise des données chiffrées quand disponibles. "
+                    "Adopte un ton rassurant et factuel."
                 )},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=400, temperature=0.35,
+            max_tokens=400,
+            temperature=0.30,
         )
-        return resp.choices[0].message.content
+        content = resp.choices[0].message.content.strip()
+        # Fix double-encoding: Esprit API may return UTF-8 bytes decoded as Latin-1
+        try:
+            content = content.encode('latin-1').decode('utf-8')
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            pass  # already valid unicode
+        return content
     except Exception:
         return None
 
@@ -336,7 +352,9 @@ _HELP_TEXT = (
     "• **Analyse d'un bien** — attachez une propriété avec le bouton +\n"
     "• **Meilleures affaires** — *\"Quels bons plans à Sousse sous 200 000 TND?\"*\n"
     "• **Analyse de marché** — *\"Analyse le marché immobilier de Tunis\"*\n"
-    "• **Conseil portefeuille** — *\"Comment diversifier mon portefeuille?\"*"
+    "• **Conseil portefeuille** — *\"Comment diversifier mon portefeuille?\"*\n\n"
+    "En **Mode Normal** : évaluation claire pour locataires et primo-accédants.\n"
+    "En **Mode Expert** : analyse financière complète pour investisseurs."
 )
 
 
@@ -345,7 +363,7 @@ def handle_chat(
     text: str,
     df: pd.DataFrame,
     portfolio_advisor,
-    groq_key: str = None,
+    groq_key: str = None,   # kept for backward compat, ignored (using Esprit now)
 ) -> dict:
     """
     Route a text query to the correct handler and return a structured response.
@@ -355,33 +373,34 @@ def handle_chat(
 
     if intent == "deal_search":
         data = search_deals(df, params)
-        llm_comment = None
-        if groq_key and data.get("deals"):
-            loc = params.get("location", "Tunisie")
-            prompt = (
-                f"L'utilisateur cherche des bons plans immobiliers à {loc}. "
-                f"J'ai trouvé {data['total_found']} annonces correspondantes. "
-                "Donne un commentaire de marché général en 2-3 phrases, "
-                "avec les opportunités et risques clés."
-            )
-            llm_comment = _try_groq(prompt, groq_key)
-        return {"type": "deal_search",  "data": data, "llm_comment": llm_comment,
+        loc = params.get("location", "Tunisie")
+        prompt = (
+            f"L'utilisateur cherche des bons plans immobiliers à {loc}. "
+            f"Il y a {data['total_found']} annonces correspondantes. "
+            f"Le budget est {'≤ ' + str(params.get('budget', 0)) + ' TND' if params.get('budget') else 'non précisé'}. "
+            "Donne un commentaire de marché général en 2-3 phrases, "
+            "avec les opportunités et points de vigilance clés. Reste factuel."
+        )
+        llm_comment = _try_llm(prompt) if data.get("deals") else None
+        return {"type": "deal_search", "data": data, "llm_comment": llm_comment,
                 "intent": intent, "params": params}
 
     elif intent == "market_analysis":
         data = analyze_market(df, params)
-        llm_comment = None
-        if groq_key and "error" not in data:
-            loc = params.get("location", "Tunisie")
+        loc = params.get("location", "Tunisie")
+        if "error" not in data:
             prompt = (
                 f"Analyse du marché immobilier à {loc}: "
-                f"prix médian {data.get('median_price',0):,} TND, "
-                f"rendement locatif brut {data.get('gross_yield_pct',0)}%/an, "
-                f"appréciation {data.get('appreciation_rate_pct',0)}%/an, "
-                f"TMM BCT {data.get('bct_tmm_pct',0)}%. "
-                "Donne une analyse de 3-4 phrases pour un investisseur tunisien."
-            )
-            llm_comment = _try_groq(prompt, groq_key)
+                f"prix médian {data.get('median_price', 0):,.0f} TND, "
+                f"rendement locatif brut {data.get('gross_yield_pct', 0)}%/an, "
+                f"appréciation {data.get('appreciation_rate_pct', 0)}%/an, "
+                f"TMM BCT {data.get('bct_tmm_pct', 0)}%. "
+                "{} annonces analysées. "
+                "Donne une synthèse de 3-4 phrases pour un investisseur tunisien."
+            ).format(data.get("total_listings", 0))
+            llm_comment = _try_llm(prompt)
+        else:
+            llm_comment = None
         return {"type": "market_analysis", "data": data, "llm_comment": llm_comment,
                 "intent": intent, "params": params}
 
@@ -391,11 +410,8 @@ def handle_chat(
                 "intent": intent, "params": params}
 
     else:
-        # General — try Groq, fall back to help text
-        llm_response = _try_groq(
-            f"Question immobilier Tunisie: {text}", groq_key
-        ) if groq_key else None
-
+        # General — try LLM, fall back to help text
+        llm_response = _try_llm(f"Question immobilier Tunisie: {text}")
         return {
             "type": "general",
             "data": {"message": llm_response or _HELP_TEXT},

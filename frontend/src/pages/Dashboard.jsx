@@ -1,6 +1,7 @@
 // src/pages/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 import { fetchDashboardStats } from '../services/api';
 
 const DashboardSkeleton = () => (
@@ -39,6 +40,7 @@ const DashboardCard = ({ icon, label, value, description, color = 'var(--primary
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -73,13 +75,11 @@ export default function Dashboard() {
       <div style={{ padding: 48 }} className="container">
         <div className="card" style={{ padding: 32, textAlign: 'center', borderColor: '#fecaca', background: '#fff1f2' }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
-          <h2 className="premium-font" style={{ color: '#b91c1c', marginBottom: 8 }}>Erreur de chargement</h2>
+          <h2 className="premium-font" style={{ color: '#b91c1c', marginBottom: 8 }}>{t('dashboard.loadingError')}</h2>
           <p style={{ color: '#ef4444', marginBottom: 24 }}>{error}</p>
-          <button 
-            onClick={() => window.location.reload()}
-            style={{ background: '#b91c1c', color: '#fff', padding: '12px 24px', borderRadius: 12, fontWeight: 700 }}
-          >
-            Réessayer
+          <button onClick={() => window.location.reload()}
+            style={{ background: '#b91c1c', color: '#fff', padding: '12px 24px', borderRadius: 12, fontWeight: 700, border: 'none', cursor: 'pointer' }}>
+            {t('app.retry')}
           </button>
         </div>
       </div>
@@ -90,43 +90,43 @@ export default function Dashboard() {
 
   const roleConfigs = {
     PARTICULIER: {
-      title: "Tableau de Bord Sécurisé",
-      subtitle: "Surveillez vos recherches et analysez les risques locaux en temps réel.",
+      title: t('dashboard.titleParticulier'),
+      subtitle: t('dashboard.subtitleParticulier'),
       icon: "🛡️",
       cards: [
-        { icon: "🏠", label: "Marché Actuel", value: stats.stats.total_listings, description: "Annonces analysées ce mois" },
-        { icon: "📍", label: "Zones Sûres", value: "85%", description: "Indice de sécurité moyen Tunisie", color: "#16a34a" },
-        { icon: "💰", label: "Prix Moyen", value: `${Math.round(stats.stats.avg_price).toLocaleString()} DT`, description: "Basé sur vos critères de recherche" }
+        { icon: "🏠", label: t('dashboard.marketCard'), value: stats.stats.total_listings, description: t('dashboard.marketSub') },
+        { icon: "📍", label: t('dashboard.safeZones'), value: "85%", description: t('dashboard.safeZonesSub'), color: "#16a34a" },
+        { icon: "💰", label: t('dashboard.avgPrice'), value: `${Math.round(stats.stats.avg_price).toLocaleString()} DT`, description: t('dashboard.avgPriceSub') }
       ]
     },
     INVESTISSEUR: {
-      title: "Intelligence d'Investissement",
-      subtitle: "Analyse prédictive et détection d'opportunités à haut rendement.",
+      title: t('dashboard.titleInvestisseur'),
+      subtitle: t('dashboard.subtitleInvestisseur'),
       icon: "💎",
       cards: [
-        { icon: "📈", label: "Opportunités", value: stats.stats.opportunities, description: "Biens sous-évalués détectés", color: "var(--accent)" },
-        { icon: "📊", label: "Couverture", value: stats.stats.total_listings, description: "Annonces filtrées par IA" },
-        { icon: "🏛️", label: "Haut Standing", value: stats.stats.high_value, description: "Patrimoine de luxe disponible" }
+        { icon: "📈", label: t('dashboard.opportunities'), value: stats.stats.opportunities, description: t('dashboard.opportunitiesSub'), color: "var(--accent)" },
+        { icon: "📊", label: t('dashboard.coverage'), value: stats.stats.total_listings, description: t('dashboard.coverageSub') },
+        { icon: "🏛️", label: t('dashboard.luxury'), value: stats.stats.high_value, description: t('dashboard.luxurySub') }
       ]
     },
     AGENT: {
-      title: "Console de Gestion Agent",
-      subtitle: "Gérez vos mandats et suivez la performance de votre portefeuille.",
+      title: t('dashboard.titleAgent'),
+      subtitle: t('dashboard.subtitleAgent'),
       icon: "🏢",
       cards: [
-        { icon: "📋", label: "Mandats Actifs", value: stats.stats.active_listings, description: "Propriétés sous votre gestion" },
-        { icon: "👥", label: "Base Clients", value: stats.stats.total_clients, description: "Acquéreurs potentiels qualifiés" },
-        { icon: "⚡", label: "Performance", value: "92%", description: "Taux de conversion moyen", color: "#16a34a" }
+        { icon: "📋", label: t('dashboard.mandats'), value: stats.stats.active_listings, description: t('dashboard.mandatsSub') },
+        { icon: "👥", label: t('dashboard.clients'), value: stats.stats.total_clients, description: t('dashboard.clientsSub') },
+        { icon: "⚡", label: t('dashboard.performance'), value: "92%", description: t('dashboard.performanceSub'), color: "#16a34a" }
       ]
     },
     BANQUIER: {
-      title: "Analyse de Risque Crédit",
-      subtitle: "Validation des dossiers et évaluation des garanties immobilières.",
+      title: t('dashboard.titleBanquier'),
+      subtitle: t('dashboard.subtitleBanquier'),
       icon: "🏦",
       cards: [
-        { icon: "⏳", label: "Dossiers", value: stats.stats.pending_loans, description: "Demandes en cours d'examen" },
-        { icon: "✅", label: "Approbations", value: `${(stats.stats.approved_amount || 0).toLocaleString()} DT`, description: "Volume total débloqué", color: "#16a34a" },
-        { icon: "📉", label: "Taux Moyen", value: "8.2%", description: "Taux directeur actuel TMM+" }
+        { icon: "⏳", label: t('dashboard.dossiers'), value: stats.stats.pending_loans, description: t('dashboard.dossiersSub') },
+        { icon: "✅", label: t('dashboard.approvals'), value: `${(stats.stats.approved_amount || 0).toLocaleString()} DT`, description: t('dashboard.approvalsSub'), color: "#16a34a" },
+        { icon: "📉", label: t('dashboard.avgRate'), value: "8.2%", description: t('dashboard.avgRateSub') }
       ]
     }
   };
@@ -160,17 +160,14 @@ export default function Dashboard() {
         boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.3)'
       }}>
         <div>
-          <h3 className="premium-font" style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Vérification Kadastra™</h3>
-          <p style={{ fontSize: 14, opacity: 0.8, maxWidth: 500 }}>
-            Toutes les données affichées sont cryptées et vérifiées par notre protocole de sécurité. 
-            Dernière mise à jour : il y a quelques instants.
-          </p>
+          <h3 className="premium-font" style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>{t('dashboard.securityTitle')}</h3>
+          <p style={{ fontSize: 14, opacity: 0.8, maxWidth: 500 }}>{t('dashboard.securityDesc')}</p>
         </div>
-        <div style={{ 
-          background: 'rgba(255,255,255,0.1)', padding: '12px 24px', borderRadius: 12, 
-          fontSize: 13, fontWeight: 700, border: '1px solid rgba(255,255,255,0.2)' 
+        <div style={{
+          background: 'rgba(255,255,255,0.1)', padding: '12px 24px', borderRadius: 12,
+          fontSize: 13, fontWeight: 700, border: '1px solid rgba(255,255,255,0.2)'
         }}>
-          STATUS: OPÉRATIONNEL
+          {t('dashboard.statusOk')}
         </div>
       </div>
     </div>

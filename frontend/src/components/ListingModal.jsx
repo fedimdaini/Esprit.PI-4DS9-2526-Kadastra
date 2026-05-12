@@ -1,11 +1,13 @@
 // src/components/ListingModal.jsx
 import React, { useEffect, useMemo } from 'react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 function fireKadastraAttach(listing) {
   window.dispatchEvent(new CustomEvent('kadastra-attach-listing', { detail: listing }));
 }
 
 export default function ListingModal({ listing, onClose }) {
+  const { t } = useLanguage();
   useEffect(() => {
     const handler = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', handler);
@@ -27,11 +29,11 @@ export default function ListingModal({ listing, onClose }) {
   const { titre, lien, prix, adresse, localisation, description, chambres, salles_de_bain, surface, type: type_bien, source, first_image, price_analysis } = listing;
 
   const fields = [
-    { icon: '📍', label: 'Localisation', value: adresse || localisation },
-    { icon: '📐', label: 'Surface', value: surface && surface !== 'N/A' ? `${surface} m²` : null },
-    { icon: '🛏️', label: 'Chambres', value: chambres && chambres !== 'N/A' ? chambres : null },
-    { icon: '🚿', label: 'Salles de bain', value: salles_de_bain && salles_de_bain !== 'N/A' ? salles_de_bain : null },
-    { icon: '📞', label: 'Contact', value: phoneNumber },
+    { icon: '📍', label: t('modal.location'), value: adresse || localisation },
+    { icon: '📐', label: t('modal.surface'), value: surface && surface !== 'N/A' ? `${surface} m²` : null },
+    { icon: '🛏️', label: t('modal.bedrooms'), value: chambres && chambres !== 'N/A' ? chambres : null },
+    { icon: '🚿', label: t('modal.bathrooms'), value: salles_de_bain && salles_de_bain !== 'N/A' ? salles_de_bain : null },
+    { icon: '📞', label: t('modal.contact'), value: phoneNumber },
   ].filter(f => f.value != null && f.value !== '');
 
   return (
@@ -106,7 +108,7 @@ export default function ListingModal({ listing, onClose }) {
               <div style={{ fontSize: 32, fontWeight: 900, color: 'var(--primary)', letterSpacing: '-1px' }}>
                 {prix || '—'}
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Prix Total</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>{t('modal.totalPrice')}</div>
             </div>
           </div>
 
@@ -126,7 +128,7 @@ export default function ListingModal({ listing, onClose }) {
 
           {/* Description */}
           <div style={{ marginBottom: 40 }}>
-            <h3 className="premium-font" style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Description</h3>
+            <h3 className="premium-font" style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>{t('modal.description')}</h3>
             <p style={{ fontSize: 15, color: 'var(--text-muted)', lineHeight: 1.8, whiteSpace: 'pre-line' }}>
               {description}
             </p>
@@ -157,12 +159,12 @@ export default function ListingModal({ listing, onClose }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: c.dot, flexShrink: 0 }}/>
                     <span style={{ fontSize: 13, fontWeight: 800, color: c.text }}>
-                      Analyse de prix · IA Kadastra
+                      {t('modal.priceAnalysis')}
                     </span>
                   </div>
                   {/* Delta line */}
                   <div style={{ fontSize: 13, color: c.text, marginBottom: 6 }}>
-                    Prix {abs > 0 ? `${abs > 0 && price_analysis.delta_pct > 0 ? 'au-dessus' : 'en dessous'} du marché` : 'dans la moyenne'}{' '}
+                    Prix {abs > 0 ? `${abs > 0 && price_analysis.delta_pct > 0 ? t('modal.aboveMarket') : t('modal.belowMarket')}` : t('modal.avgPrice')}{' '}
                     {abs > 0 && (
                       <strong>({price_analysis.delta_pct > 0 ? '+' : ''}{price_analysis.delta_pct}%)</strong>
                     )}{' '}
@@ -170,7 +172,7 @@ export default function ListingModal({ listing, onClose }) {
                   </div>
                   {/* Predicted price */}
                   <div style={{ fontSize: 14, fontWeight: 700, color: c.text, marginBottom: 10 }}>
-                    Prix estimé par le marché :&nbsp;
+                    {t('modal.estimatedPrice')}&nbsp;
                     <span style={{ fontSize: 16 }}>~{price_analysis.predicted_price.toLocaleString('fr-TN')} TND</span>
                   </div>
                   {/* Divider */}
@@ -187,7 +189,7 @@ export default function ListingModal({ listing, onClose }) {
           {/* Security Map */}
           <div style={{ marginBottom: 40 }}>
             <h3 className="premium-font" style={{ fontSize: 18, fontWeight: 800, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-              🛡️ Analyse de Sécurité <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', background: 'var(--surface-alt)', padding: '4px 10px', borderRadius: 8 }}>Périmètre 2km</span>
+              {t('modal.securityAnalysis')} <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', background: 'var(--surface-alt)', padding: '4px 10px', borderRadius: 8 }}>{t('modal.radius2km')}</span>
             </h3>
             <div style={{ borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border)', height: 400, boxShadow: 'var(--shadow-premium)' }}>
               <iframe
@@ -215,7 +217,7 @@ export default function ListingModal({ listing, onClose }) {
               onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = '#fff'; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#f8fafc'; }}
             >
-              ⚖️ Générer un Contrat
+              {t('modal.generateContract')}
             </button>
             <button
               onClick={() => { fireKadastraAttach(listing); onClose(); }}
@@ -228,7 +230,7 @@ export default function ListingModal({ listing, onClose }) {
               onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
               onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
             >
-              🤖 Analyser avec l'IA
+              {t('modal.analyzeAI')}
             </button>
             {lien && lien !== '#' && (
               <a href={lien} target="_blank" rel="noopener noreferrer" style={{
@@ -240,7 +242,7 @@ export default function ListingModal({ listing, onClose }) {
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
               >
-                Consulter l'annonce
+                {t('modal.viewListing')}
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
               </a>
             )}

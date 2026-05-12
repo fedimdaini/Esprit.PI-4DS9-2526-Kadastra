@@ -7,6 +7,7 @@ import Pagination  from './components/Pagination';
 import ListingModal from './components/ListingModal';
 import KadastraAgent from './components/KadastraAgent';
 import { fetchListings, fetchStats, fetchFilterOptions } from './services/api';
+import { useLanguage } from './i18n/LanguageContext';
 
 const PAGE_SIZE  = 12;
 const INIT_FILTERS = {
@@ -16,6 +17,7 @@ const INIT_FILTERS = {
 };
 
 export default function App() {
+  const { t } = useLanguage();
   const [listings,  setListings]  = useState([]);
   const [total,     setTotal]     = useState(0);
   const [options,   setOptions]   = useState({ types: [], cities: [] });
@@ -86,10 +88,10 @@ export default function App() {
           }}>
             <div>
               <h1 className="premium-font" style={{ fontSize: 28, fontWeight: 800, color: 'var(--text)', marginBottom: 4, letterSpacing: '-0.5px' }}>
-                Exploration Immobilière
+                {t('app.exploreTitle')}
               </h1>
               <p style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 500 }}>
-                {total > 0 ? `Découvrez les ${total.toLocaleString()} meilleures opportunités en Tunisie` : 'Recherche des meilleures opportunités...'}
+                {total > 0 ? t('app.exploreSubtotal').replace('{n}', total.toLocaleString()) : t('app.exploreSearching')}
               </p>
             </div>
             
@@ -100,10 +102,10 @@ export default function App() {
                 value={filters.ordering}
                 onChange={e => setFilters(f => ({ ...f, ordering: e.target.value, page: 1 }))}
               >
-                <option value="-date_post">Plus récentes</option>
-                <option value="prix">Prix croissant</option>
-                <option value="-prix">Prix décroissant</option>
-                <option value="-surface">Plus grande surface</option>
+                <option value="-date_post">{t('app.sortNewest')}</option>
+                <option value="prix">{t('app.sortPriceAsc')}</option>
+                <option value="-prix">{t('app.sortPriceDesc')}</option>
+                <option value="-surface">{t('app.sortSurface')}</option>
               </select>
             </div>
           </div>
@@ -111,8 +113,8 @@ export default function App() {
           {/* Error State */}
           {error && (
             <div className="card" style={{ padding: 24, background: '#fff1f2', borderColor: '#fecaca', color: '#b91c1c', marginBottom: 32 }}>
-               <div style={{ fontWeight: 700, marginBottom: 8 }}>⚠️ Erreur de connexion</div>
-               <div style={{ fontSize: 14 }}>Impossible de joindre le serveur. Assurez-vous que le backend Django est actif sur le port 8000.</div>
+               <div style={{ fontWeight: 700, marginBottom: 8 }}>⚠️ {t('app.connectionError')}</div>
+               <div style={{ fontSize: 14 }}>{t('app.connectionErrorDesc')}</div>
             </div>
           )}
 
@@ -126,9 +128,9 @@ export default function App() {
           ) : listings.length === 0 && !loading ? (
             <div style={{ textAlign: 'center', padding: '100px 0' }}>
               <div style={{ fontSize: 64, marginBottom: 24 }}>🔎</div>
-              <h3 className="premium-font" style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>Aucun résultat</h3>
-              <p style={{ color: 'var(--text-muted)' }}>Essayez d'élargir vos critères de recherche ou de réinitialiser les filtres.</p>
-              <button onClick={handleReset} style={{ marginTop: 24, background: 'var(--primary)', color: '#fff', padding: '12px 32px', borderRadius: 12, fontWeight: 700 }}>Réinitialiser</button>
+              <h3 className="premium-font" style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>{t('app.noResults')}</h3>
+              <p style={{ color: 'var(--text-muted)' }}>{t('app.noResultsDesc')}</p>
+              <button onClick={handleReset} style={{ marginTop: 24, background: 'var(--primary)', color: '#fff', padding: '12px 32px', borderRadius: 12, fontWeight: 700, border: 'none', cursor: 'pointer' }}>{t('app.reset')}</button>
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 32 }}>
@@ -175,7 +177,7 @@ export default function App() {
             style={{ height: 64, width: 'auto', objectFit: 'contain', marginBottom: 10 }}
           />
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 0 }}>
-            © {new Date().getFullYear()} Plateforme immobilière avancée. Tous droits réservés.
+            © {new Date().getFullYear()} {t('app.footerCopy')}
           </p>
         </div>
       </footer>

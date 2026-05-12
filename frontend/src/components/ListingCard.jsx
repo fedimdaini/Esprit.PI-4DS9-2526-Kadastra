@@ -1,5 +1,6 @@
 // src/components/ListingCard.jsx
 import React from 'react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 const CardStat = ({ icon, label, value }) => {
   if (!value || value === 'N/A') return null;
@@ -24,6 +25,7 @@ const PILL_STYLE = {
 };
 
 export default function ListingCard({ listing, onClick }) {
+  const { t } = useLanguage();
   const {
     titre, prix, adresse, localisation, pieces, chambres, salles_de_bain, surface,
     source, first_image,
@@ -35,7 +37,7 @@ export default function ListingCard({ listing, onClick }) {
     if (original_currency === 'EUR' && price_numeric && prix)
       return `${prix} ≈ ${price_numeric.toLocaleString('fr-TN')} TND`;
     if (prix && prix !== 'N/A') return prix;
-    return 'Prix à consulter';
+    return t('card.priceOnRequest');
   })();
 
   return (
@@ -128,7 +130,7 @@ export default function ListingCard({ listing, onClick }) {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               onClick={(e) => { e.stopPropagation(); fireKadastraAttach(listing); }}
-              title="Analyser avec Kadastra AI"
+              title={t('card.analyzeWith')}
               style={{
                 background: 'linear-gradient(135deg,#3B82F6,#1D4ED8)',
                 border: 'none', borderRadius: 8, padding: '6px 12px',
@@ -137,7 +139,7 @@ export default function ListingCard({ listing, onClick }) {
                 whiteSpace: 'nowrap',
               }}
             >
-              Ask AI
+              {t('card.askAI')}
             </button>
             <div style={{
               width: 32, height: 32, borderRadius: '50%', background: 'var(--primary-light)',

@@ -1,14 +1,16 @@
 // frontend/src/pages/SecurityMap.jsx
 import React, { useState } from 'react';
 import MarketTrendMap from '../components/MarketTrendMap';
-
-const TABS = [
-  { id: 'incidents', label: '🛡️ Incidents Sécurité' },
-  { id: 'market',    label: '📈 Tendances Marché' },
-];
+import { useLanguage } from '../i18n/LanguageContext';
 
 const SecurityMap = () => {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState('incidents');
+
+  const TABS = [
+    { id: 'incidents', label: t('map.tabSecurity') },
+    { id: 'market',    label: t('map.tabTrends')   },
+  ];
 
   return (
     <div style={{ width: '100%', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
@@ -66,7 +68,7 @@ const SecurityMap = () => {
           <iframe
             src="http://127.0.0.1:8000/api/contracts/map/"
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-            title="Carte des Incidents Sécurité"
+            title={t('map.tabSecurity')}
           />
         )}
         {activeTab === 'market' && <MarketTrendMap />}

@@ -14,3 +14,4 @@ requests>=2.31
 beautifulsoup4>=4.12
 apscheduler>=3.10
 groq>=0.8
+openai>=1.0

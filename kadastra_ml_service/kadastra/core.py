@@ -637,7 +637,8 @@ class InvestmentScenarioGenerator:
         rem=max(0,profile["budget"]-float(prop.get("price_numeric",0)))
         port_r=self.portfolio_advisor.recommend_diversification([prop],budget=rem)
 
-        verdict=self._verdict(rental,risk,roi_r,mc_rental=_primary_mc)
+        verdict=self._verdict(rental,risk,roi_r,mc_rental=_primary_mc,
+                              market_price_label=prop.get("market_price_label"))
 
         # Financial-only language — no modeling/algorithmic terms
         _risk_labels = {
@@ -683,36 +684,58 @@ class InvestmentScenarioGenerator:
             "verdict":verdict, "explanations":explanations,
         }
 
-    def _verdict(self, rental, risk, roi, mc_rental=None):
+    def _verdict(self, rental, risk, roi, mc_rental=None, market_price_label=None):
         C=self.C; hurdle=C["bcт_tmm"]*100; irr=roi["irr_percent"]
         gy=rental["gross_yield"]; rl=risk["risk_level"]
+        rs=float(risk.get("overall_risk_score", 0.5))
+        nat_y=C["gross_yield_national"]*100; tun_y=C["gross_yield_tunis"]*100
         score=0; ins=[]
 
-        # Yield component — 0-25 pts
-        if gy>C["gross_yield_tunis"]*100:   score+=25; ins.append(f"Yield {gy:.1f}%>Tunis avg")
-        elif gy>C["gross_yield_national"]*100: score+=18; ins.append(f"Yield {gy:.1f}%>national avg")
-        elif gy>4.0:                         score+=10; ins.append(f"Yield {gy:.1f}% moderate")
-        else:                                score+=3;  ins.append(f"Yield {gy:.1f}% below avg")
+        # ── Yield — 0-25 pts (6 bands) ───────────────────────────────────────
+        if   gy > tun_y + 2:      score+=25; ins.append(f"Rendement {gy:.1f}% — exceptionnel")
+        elif gy > tun_y:          score+=21; ins.append(f"Rendement {gy:.1f}% > moy. Tunis ({tun_y:.1f}%)")
+        elif gy > nat_y * 1.2:   score+=16; ins.append(f"Rendement {gy:.1f}% — bon")
+        elif gy > nat_y:          score+=11; ins.append(f"Rendement {gy:.1f}% > moy. nationale ({nat_y:.1f}%)")
+        elif gy > 3.5:            score+=5;  ins.append(f"Rendement {gy:.1f}% — faible")
+        else:                     score+=1;  ins.append(f"Rendement {gy:.1f}% — très faible")
 
-        # Risk component — 0-25 pts
-        if rl=="Low":    score+=25; ins.append("Low risk profile")
-        elif rl=="Medium": score+=15; ins.append("Medium risk")
-        else:            score+=5;  ins.append("High risk")
+        # ── Risk — 0-25 pts (6 bands using float score for precision) ────────
+        if   rs < 0.20:           score+=25; ins.append("Risque très faible — bien premium")
+        elif rl == "Low":         score+=21; ins.append("Risque faible")
+        elif rs < 0.48:           score+=15; ins.append("Risque modéré-faible")
+        elif rl == "Medium":      score+=9;  ins.append("Risque modéré")
+        elif rs < 0.75:           score+=4;  ins.append("Risque modéré-élevé")
+        else:                     score+=1;  ins.append("Risque élevé")
 
-        # IRR vs BCT hurdle — 0-30 pts
-        if irr>hurdle+5:       score+=30; ins.append(f"IRR {irr:.1f}% well above hurdle")
-        elif irr>hurdle+2:     score+=22; ins.append(f"IRR {irr:.1f}% above hurdle")
-        elif irr>hurdle:       score+=15; ins.append(f"IRR {irr:.1f}% marginally above hurdle")
-        elif irr>0:            score+=7;  ins.append(f"IRR {irr:.1f}%<hurdle {hurdle:.2f}%")
-        else:                             ins.append(f"Negative/zero IRR ({irr:.1f}%)")
+        # ── IRR vs BCT hurdle — 0-30 pts (7 bands) ───────────────────────────
+        if   irr > hurdle + 8:    score+=30; ins.append(f"IRR {irr:.1f}% — rentabilité exceptionnelle")
+        elif irr > hurdle + 4:    score+=25; ins.append(f"IRR {irr:.1f}% — bien au-dessus du seuil")
+        elif irr > hurdle + 1.5:  score+=19; ins.append(f"IRR {irr:.1f}% — au-dessus du seuil BCT")
+        elif irr > hurdle:        score+=13; ins.append(f"IRR {irr:.1f}% — légèrement au-dessus")
+        elif irr > hurdle - 3:    score+=6;  ins.append(f"IRR {irr:.1f}% — légèrement sous le seuil")
+        elif irr > 0:             score+=2;  ins.append(f"IRR {irr:.1f}% — sous le seuil BCT ({hurdle:.1f}%)")
+        else:                     score+=0;  ins.append(f"IRR négatif ({irr:.1f}%)")
 
-        # Monte Carlo NPV probability — 0-20 pts
+        # ── Monte Carlo NPV probability — 0-20 pts (5 bands) ─────────────────
         if mc_rental:
             prob=mc_rental.get("prob_positive",0)
-            if prob>0.60:   score+=20; ins.append(f"P(NPV>0)={prob*100:.0f}% — strong")
-            elif prob>0.40: score+=12; ins.append(f"P(NPV>0)={prob*100:.0f}% — moderate")
-            elif prob>0.20: score+=5;  ins.append(f"P(NPV>0)={prob*100:.0f}% — weak")
-            else:                      ins.append(f"P(NPV>0)={prob*100:.0f}% — very weak")
+            if   prob > 0.75:     score+=20; ins.append(f"P(NPV>0)={prob*100:.0f}% — excellent")
+            elif prob > 0.60:     score+=16; ins.append(f"P(NPV>0)={prob*100:.0f}% — bon")
+            elif prob > 0.45:     score+=10; ins.append(f"P(NPV>0)={prob*100:.0f}% — modéré")
+            elif prob > 0.28:     score+=4;  ins.append(f"P(NPV>0)={prob*100:.0f}% — faible")
+            else:                 score+=0;  ins.append(f"P(NPV>0)={prob*100:.0f}% — très faible")
 
-        rec="STRONG BUY" if score>=75 else "CONSIDER" if score>=50 else "CAUTIOUS" if score>=30 else "AVOID"
+        # ── LightGBM price cross-reference bonus/penalty — ±7 pts ─────────────
+        if market_price_label == "great":
+            score += 7; ins.append("Prix sous-évalué vs marché (+bonus)")
+        elif market_price_label == "high":
+            score -= 4; ins.append("Prix légèrement surévalué (-malus)")
+        elif market_price_label == "very_high":
+            score -= 7; ins.append("Prix très surévalué (-malus important)")
+
+        score=max(0,min(score,100))
+        rec=("STRONG BUY" if score>=70 else
+             "CONSIDER"   if score>=46 else
+             "CAUTIOUS"   if score>=27 else
+             "AVOID")
         return {"score":score,"recommendation":rec,"key_insights":ins,"bct_hurdle_used":hurdle}

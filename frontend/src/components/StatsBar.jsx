@@ -1,13 +1,15 @@
 // src/components/StatsBar.jsx
 import React from 'react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export default function StatsBar({ stats }) {
+  const { t } = useLanguage();
   if (!stats) return null;
 
   const items = [
-    { label: 'Total annonces', value: stats.total, color: '#1a56db', icon: '🏠' },
-    { label: 'Mubawab', value: stats.mubawab, color: '#1a56db', icon: '🔵' },
-    { label: 'Tayara', value: stats.tayara, color: '#0ea5e9', icon: '🩵' },
+    { label: t('stats.total'), value: stats.total, color: '#1a56db', icon: '🏠' },
+    { label: 'Mubawab',       value: stats.mubawab, color: '#1a56db', icon: '🔵' },
+    { label: 'Tayara',        value: stats.tayara,  color: '#0ea5e9', icon: '🩵' },
   ];
 
   return (

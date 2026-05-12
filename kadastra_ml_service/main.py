@@ -65,10 +65,20 @@ class PropertyInput(BaseModel):
     chauffage: int = 0
     jardin: int = 0
     piscine: int = 0
-    # Cross-reference data from friend's LightGBM listing-level models (optional)
-    market_price_estimate: Optional[float] = None   # predicted fair market price (TND)
-    market_price_label:    Optional[str]   = None   # 'great'|'fair'|'high'|'very_high'
-    market_price_delta_pct: Optional[float] = None  # (listed - estimated) / estimated × 100
+    # Cross-reference from friend's LightGBM listing-level models (optional)
+    market_price_estimate:  Optional[float] = None  # predicted fair market price (TND)
+    market_price_label:     Optional[str]   = None  # 'great'|'fair'|'high'|'very_high'
+    market_price_delta_pct: Optional[float] = None  # (listed − estimated) / estimated × 100
+    # POI enrichment from dataset (optional — only populated for geocoded listings)
+    n_hospitals:      Optional[int]   = None
+    n_schools:        Optional[int]   = None
+    n_transit:        Optional[int]   = None
+    n_retail:         Optional[int]   = None
+    n_industrial:     Optional[int]   = None
+    dist_hospital_km: Optional[float] = None
+    dist_transit_km:  Optional[float] = None
+    is_urban:         Optional[int]   = None   # 1 = urban zone
+    elevation_m:      Optional[float] = None
 
 class InvestmentProfile(BaseModel):
     budget: float = 300_000
@@ -160,7 +170,8 @@ def _normalize_missing_price(prop: dict, profile: dict | None) -> tuple[dict, li
     # ── Case B: rental with a monthly rent instead of a purchase price ────
     if is_rental and price < 20_000:
         estimated_purchase = round(price * 12 / _NATIONAL_YIELD)
-        prop = {**prop, "price_numeric": estimated_purchase}
+        prop = {**prop, "price_numeric": estimated_purchase,
+                "_original_monthly_rent": price}   # preserve for normal-mode price scoring
         if profile is not None:
             profile["rental_income"] = price * 12
         extra_warnings.append(
@@ -292,6 +303,61 @@ async def analyze(req: AnalyzeRequest):
         "warnings":        warnings,
         "elapsed_seconds": round(elapsed, 2),
     }
+
+
+@app.post("/api/analyze/normal")
+async def analyze_normal_endpoint(req: AnalyzeRequest):
+    """
+    Normal-mode analysis — for renters, students, first-time buyers.
+    Consumer-friendly output: price comparison, neighbourhood quality, amenities.
+    No investment jargon (no IRR, BCT, NPV, holding period, rendement locatif).
+    """
+    _check_loaded()
+    t0 = time.time()
+
+    prop = req.property.dict()
+    for k in ["pieces", "chambres", "sallesdebain"]:
+        if prop[k] is None:
+            prop[k] = 0
+
+    profile = req.profile.dict() if req.profile else None
+
+    # Normalise price — converts monthly rent → estimated purchase price internally,
+    # but stores original monthly rent in prop["_original_monthly_rent"]
+    prop, extra_warnings = _normalize_missing_price(prop, profile)
+    warnings = extra_warnings
+
+    # Risk assessment (used for neighbourhood safety only — not shown as a score)
+    try:
+        risk_result = _generator.simulator.risk_engine.calculate_overall_risk(prop)
+    except Exception:
+        risk_result = {"risk_level": "Medium", "overall_risk_score": 0.5,
+                       "risk_flags": [], "mitigation": [], "component_scores": {}}
+
+    # XGBoost price estimate — only for sale properties (not monthly-rent rentals)
+    xgb_estimate = None
+    if not prop.get("_original_monthly_rent"):
+        try:
+            sim      = _generator.simulator
+            type_key = prop.get("Type", "")
+            if type_key in sim._xgb_models:
+                xgb_estimate = float(sim.predict_exit_price(prop, years=0))
+            elif type_key in _SALE_EQUIV:
+                proxy = {**prop, "Type": _SALE_EQUIV[type_key]}
+                xgb_estimate = float(sim.predict_exit_price(proxy, years=0))
+            # Sanity-check: XGBoost sometimes returns per-m² values; discard if implausible
+            if xgb_estimate and xgb_estimate < 10_000:
+                xgb_estimate = None
+        except Exception:
+            pass
+
+    # Run consumer-mode analysis
+    from kadastra.normal_mode import analyze_normal as _analyze_normal
+    result = _analyze_normal(prop, risk_result, xgb_estimate)
+
+    result["warnings"]        = warnings
+    result["elapsed_seconds"] = round(time.time() - t0, 2)
+    return _deep_convert(result)
 
 
 @app.post("/api/quick-analyze")
