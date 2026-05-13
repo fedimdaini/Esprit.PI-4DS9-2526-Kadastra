@@ -548,10 +548,21 @@ class PortfolioDiversificationAdvisor:
             X[col]=X[col].clip(lo,hi)
         scaler=StandardScaler(); X_sc=scaler.fit_transform(X)
         best_k,best_sil=5,-1.0
+        # for k in range(3,11):
+        #     km=KMeans(n_clusters=k,random_state=42,n_init=10)
+        #     lbl=km.fit_predict(X_sc); sil=silhouette_score(X_sc,lbl)
+        #     if sil>best_sil: best_k,best_sil=k,sil
+
+
         for k in range(3,11):
             km=KMeans(n_clusters=k,random_state=42,n_init=10)
-            lbl=km.fit_predict(X_sc); sil=silhouette_score(X_sc,lbl)
+            lbl=km.fit_predict(X_sc)
+            if len(set(lbl)) < 2: continue
+            sil=silhouette_score(X_sc,lbl)
             if sil>best_sil: best_k,best_sil=k,sil
+
+
+
         km_final=KMeans(n_clusters=best_k,random_state=42,n_init=10)
         self._clusters_kmeans=km_final.fit_predict(X_sc)
         self._kmeans_model=km_final; self._kmeans_scaler=scaler
